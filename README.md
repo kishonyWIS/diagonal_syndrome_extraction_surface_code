@@ -28,13 +28,21 @@ Compares standard vs diagonal schedule memory experiments:
 #### 2. X-Junction Comparison (`compare_x_junction.py`)
 Compares standard vs diagonal schedule for spatial X-junctions:
 ```bash
+# Basic comparison (distance, detector count, etc.)
 ./venv/bin/python compare_x_junction.py
+
+# Include logical error rate analysis (requires pymatching)
+./venv/bin/python compare_x_junction.py --error-rates
+
+# Custom shots and noise levels
+./venv/bin/python compare_x_junction.py --error-rates --shots 100000 --noise-levels 0.001 0.002 0.003
 ```
 
 Outputs include:
 - Graph-like distance for both circuits
 - Number of qubits, detectors, and observables
 - Crumble URLs for visualization
+- Logical error rates and plot (when using `--error-rates`)
 
 ## Key Features
 
