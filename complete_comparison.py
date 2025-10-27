@@ -100,11 +100,13 @@ class DiagonalCubeBuilder(CubeBuilder):
                 self._generator.get_memory_qubit_plaquettes(orientation, None, None),
                 self._generator.get_memory_qubit_plaquettes(orientation, None, z),
             )
-        # else:
+        # else: spatial cube
+        # Spatial cube uses Z boundary basis for the spatial boundaries
+        # The x basis here is actually the temporal boundary basis
         return self._generator.get_spatial_cube_qubit_raw_template(), (
-            self._generator.get_spatial_cube_qubit_plaquettes(x, spec.spatial_arms, z, None),
-            self._generator.get_spatial_cube_qubit_plaquettes(x, spec.spatial_arms, None, None),
-            self._generator.get_spatial_cube_qubit_plaquettes(x, spec.spatial_arms, None, z),
+            self._generator.get_spatial_cube_qubit_plaquettes(Basis.Z, spec.spatial_arms, z, None),
+            self._generator.get_spatial_cube_qubit_plaquettes(Basis.Z, spec.spatial_arms, None, None),
+            self._generator.get_spatial_cube_qubit_plaquettes(Basis.Z, spec.spatial_arms, None, z),
         )
 
     @override
@@ -137,11 +139,65 @@ class DiagonalPipeBuilder(PipeBuilder):
     @override
     def __call__(self, spec, block_temporal_height: LinearFunction):
         """Build a pipe using diagonal plaquettes."""
-        # For now, delegate to the original pipe builder
-        from tqec.compile.specs.library.fixed_bulk import FixedBulkPipeBuilder
-        from tqec.plaquette.compilation.base import IdentityPlaquetteCompiler
-        original_builder = FixedBulkPipeBuilder(IdentityPlaquetteCompiler, DefaultRPNGTranslator())
-        return original_builder(spec, block_temporal_height)
+        from tqec.utils.scale import LinearFunction
+        from tqec.compile.blocks.block import Block
+        from tqec.compile.blocks.layers.atomic.plaquettes import PlaquetteLayer
+        from tqec.compile.blocks.layers.composed.repeated import RepeatedLayer
+        from tqec.compile.specs.enums import SpatialArms
+        from tqec.utils.position import Direction3D
+        from tqec.utils.exceptions import TQECError
+        
+        if spec.pipe_kind.is_temporal:
+            # For temporal pipes, delegate to original
+            from tqec.compile.specs.library.fixed_bulk import FixedBulkPipeBuilder
+            from tqec.plaquette.compilation.base import IdentityPlaquetteCompiler
+            original_builder = FixedBulkPipeBuilder(IdentityPlaquetteCompiler, DefaultRPNGTranslator())
+            return original_builder(spec, block_temporal_height)
+        
+        # Spatial pipe
+        x, y, z = spec.pipe_kind.x, spec.pipe_kind.y, spec.pipe_kind.z
+        assert x is not None or y is not None
+        spatial_boundary_basis: Basis = x if x is not None else y  # type: ignore
+        
+        # Get the arm(s)
+        arms = self._get_spatial_cube_arms(spec)
+        
+        # Get template and plaquettes
+        pipe_template = self._generator.get_spatial_cube_arm_raw_template(arms)
+        initialisation_plaquettes = self._generator.get_spatial_cube_arm_plaquettes(
+            spatial_boundary_basis, arms, spec.cube_specs, z, None
+        )
+        temporal_bulk_plaquettes = self._generator.get_spatial_cube_arm_plaquettes(
+            spatial_boundary_basis, arms, spec.cube_specs, None, None
+        )
+        measurement_plaquettes = self._generator.get_spatial_cube_arm_plaquettes(
+            spatial_boundary_basis, arms, spec.cube_specs, None, z
+        )
+        
+        return Block(
+            [
+                PlaquetteLayer(pipe_template, initialisation_plaquettes),
+                RepeatedLayer(
+                    PlaquetteLayer(pipe_template, temporal_bulk_plaquettes),
+                    repetitions=block_temporal_height,
+                ),
+                PlaquetteLayer(pipe_template, measurement_plaquettes),
+            ]
+        )
+    
+    @staticmethod
+    def _get_spatial_cube_arms(spec) -> SpatialArms:
+        """Return the arm(s) corresponding to the provided spec."""
+        assert spec.pipe_kind.is_spatial
+        assert any(spec.is_spatial for spec in spec.cube_specs)
+        u, v = spec.cube_specs
+        pipedir = spec.pipe_kind.direction
+        arms = SpatialArms.NONE
+        if u.is_spatial:
+            arms |= SpatialArms.RIGHT if pipedir == Direction3D.X else SpatialArms.DOWN
+        if v.is_spatial:
+            arms |= SpatialArms.LEFT if pipedir == Direction3D.X else SpatialArms.UP
+        return arms
 
 
 def create_diagonal_convention():
