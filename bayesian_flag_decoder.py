@@ -8,6 +8,7 @@ used with pymatching, conditioning on observed flag detector outcomes.
 
 from typing import Dict, Set, List, Tuple, Optional
 from collections import defaultdict
+import pymatching
 import stim
 import numpy as np
 import time
@@ -45,6 +46,44 @@ def _extract_observables_from_instruction(inst: stim.DemInstruction) -> Set[int]
         if s.startswith('L'):
             observables.add(int(s[1:]))
     return observables
+
+
+def _dem_dict_to_stim_dem(
+    dem_dict: Dict[Tuple[Tuple[int, ...], Tuple[int, ...]], float],
+    ensure_detectors: Optional[Set[int]] = None
+) -> stim.DetectorErrorModel:
+    """Convert a DEM dictionary to a stim.DetectorErrorModel.
+    
+    Args:
+        dem_dict: Dictionary mapping (detector_key, observable_key) to probability
+        ensure_detectors: Optional set of detector indices to ensure are included
+                        (by adding zero-probability boundary edges)
+        
+    Returns:
+        stim.DetectorErrorModel representation
+    """
+    instruction_lines = []
+    detectors_in_errors = set()
+    
+    for (detector_key, observable_key), prob in dem_dict.items():
+        if prob > 0 and len(detector_key) > 0:
+            detectors = set(detector_key)
+            detectors_in_errors.update(detectors)
+            observables = set(observable_key) if observable_key else None
+            inst = _create_error_instruction(detectors, prob, observables)
+            instruction_lines.append(str(inst))
+    
+    # Ensure all required detectors are included (add zero-probability boundary edges)
+    if ensure_detectors is not None:
+        missing_detectors = ensure_detectors - detectors_in_errors
+        for det in sorted(missing_detectors):
+            # Add a very low probability boundary edge so the detector is included
+            instruction_lines.append(f'error(1e-20) D{det}')
+    
+    if instruction_lines:
+        return stim.DetectorErrorModel('\n'.join(instruction_lines))
+    else:
+        return stim.DetectorErrorModel()
 
 
 def _create_error_instruction(detectors: Set[int], probability: float, observables: Optional[Set[int]] = None) -> stim.DemInstruction:
@@ -199,6 +238,184 @@ def process_triggered_flags(
                 new_dem[key] = normalized_prob
 
 
+class BayesianFlagDecoder:
+    """Fast wrapper for pymatching that performs Bayesian flag decoding.
+    
+    Precomputes error groups and base DEM during initialization, then efficiently
+    creates matchable DEMs per-shot by copying the base DEM and adding conditional errors.
+    """
+    
+    def __init__(self, original_dem: stim.DetectorErrorModel, flag_detectors: Set[int]):
+        """Initialize the Bayesian flag decoder.
+        
+        Precomputes:
+        - Error groups (Stage 1)
+        - Base DEM dictionary (Stage 2)
+        - Flag conditional errors and normalization constants
+        
+        Args:
+            original_dem: Original detector-error-model with flagged errors
+            flag_detectors: Set of flag detector indices
+        """
+        self.original_dem = original_dem
+        self.flag_detectors = flag_detectors
+        
+        # Stage 1: Precompute error groups
+        self.groups = group_errors_by_flags(original_dem, flag_detectors)
+        
+        # Stage 2: Precompute base DEM dictionary (non-flag errors)
+        self.base_dem_dict = add_non_flagged_errors(self.groups, flag_detectors)
+        
+        # Stage 3 preparation: Precompute conditional errors for each flag
+        # For each flag, store: list of (detector_key, observable_key, normalized_prob) tuples
+        # (normalized probabilities are precomputed here)
+        self.flag_conditional_errors: Dict[int, List[Tuple[Tuple[int, ...], Tuple[int, ...], float]]] = {}
+        
+        for flag_idx in flag_detectors:
+            if flag_idx not in self.groups:
+                continue
+            
+            candidate_errors = self.groups[flag_idx]
+            if len(candidate_errors) == 0:
+                continue
+            
+            # Calculate normalization constant
+            z_flag = sum(inst.args_copy()[0] for inst in candidate_errors)
+            if z_flag == 0:
+                continue
+            
+            # Precompute conditional errors for this flag with normalized probabilities
+            conditional_errors = []
+            for inst in candidate_errors:
+                detectors = _extract_detectors_from_instruction(inst)
+                observables = _extract_observables_from_instruction(inst)
+                non_flag_detectors = detectors - flag_detectors
+                
+                # Skip if removing flag leaves more than 2 detectors or empty
+                if len(non_flag_detectors) == 0 or len(non_flag_detectors) > 2:
+                    continue
+                
+                detector_key = tuple(sorted(non_flag_detectors))
+                observable_key = tuple(sorted(observables)) if observables else tuple()
+                base_prob = inst.args_copy()[0]
+                normalized_prob = base_prob / z_flag  # Precompute normalized probability
+                
+                conditional_errors.append((detector_key, observable_key, normalized_prob))
+            
+            self.flag_conditional_errors[flag_idx] = conditional_errors
+        
+        # Precompute the set of all non-flag detectors that can appear in reduced DEMs
+        # This is fixed across all shots since all errors use non-flag detectors
+        all_possible_detectors = set()
+        for (detector_key, _), _ in self.base_dem_dict.items():
+            all_possible_detectors.update(detector_key)
+        for flag_idx in flag_detectors:
+            if flag_idx in self.flag_conditional_errors:
+                for detector_key, _, _ in self.flag_conditional_errors[flag_idx]:
+                    all_possible_detectors.update(detector_key)
+        
+        # Precompute sorted list for numpy indexing
+        self.non_flag_detectors = sorted(all_possible_detectors)
+        self.non_flag_detectors_array = np.array(self.non_flag_detectors, dtype=np.int64)
+    
+    def _create_matchable_dem_for_shot(
+        self, triggered_detectors: Set[int]
+    ) -> stim.DetectorErrorModel:
+        """Create a matchable DEM for a specific shot.
+        
+        Args:
+            triggered_detectors: Set of all detectors triggered in the shot (including flags)
+            
+        Returns:
+            Matchable stim.DetectorErrorModel for this shot
+        """
+        # Copy base DEM dictionary
+        dem_dict = dict(self.base_dem_dict)
+        
+        # Identify triggered flags
+        triggered_flags = triggered_detectors & self.flag_detectors
+        
+        # Add conditional errors for each triggered flag
+        for flag_idx in triggered_flags:
+            if flag_idx not in self.flag_conditional_errors:
+                continue
+            
+            # Add each conditional error with precomputed normalized probability
+            for detector_key, observable_key, normalized_prob in self.flag_conditional_errors[flag_idx]:
+                key = (detector_key, observable_key)
+                
+                # Increment probability in dem_dict
+                if key in dem_dict:
+                    dem_dict[key] += normalized_prob
+                else:
+                    dem_dict[key] = normalized_prob
+        
+        # Convert to stim.DetectorErrorModel
+        # Ensure all possible non-flag detectors are included so detector indexing is consistent
+        # (Even if they don't appear in errors for this shot, add zero-prob boundary edges)
+        return _dem_dict_to_stim_dem(dem_dict, ensure_detectors=set(self.non_flag_detectors))
+    
+    def decode(self, detector_hits: np.ndarray) -> np.ndarray:
+        """Decode a single shot.
+        
+        Args:
+            detector_hits: 1D numpy array of booleans representing detector outcomes
+            
+        Returns:
+            1D numpy array of booleans representing predicted observable flips
+        """
+        
+        # Ensure detector_hits is boolean
+        if detector_hits.dtype != bool:
+            detector_hits = detector_hits.astype(bool)
+        
+        triggered_detectors = set(np.where(detector_hits)[0].tolist())
+        
+        # Create matchable DEM for this shot
+        reduced_dem = self._create_matchable_dem_for_shot(triggered_detectors)
+        
+        # If reduced DEM is empty, return empty observable array
+        if len(reduced_dem) == 0:
+            # Try to infer number of observables from original DEM
+            num_observables = self.original_dem.num_observables
+            return np.zeros(num_observables, dtype=bool)
+        
+        # Create decoder
+        matching = pymatching.Matching.from_detector_error_model(reduced_dem)
+        
+        # If no detectors in reduced DEM, return empty observable array
+        if len(self.non_flag_detectors) == 0:
+            num_observables = self.original_dem.num_observables
+            return np.zeros(num_observables, dtype=bool)
+        
+        # Extract reduced detector hits using simple numpy indexing
+        # reduced_detector_hits[i] = detector_hits[non_flag_detectors[i]]
+        reduced_detector_hits = detector_hits[self.non_flag_detectors_array]
+        
+        # Decode
+        predicted_observables = matching.decode(reduced_detector_hits)
+        
+        return predicted_observables
+    
+    def decode_batch(self, detector_hits_batch: np.ndarray) -> np.ndarray:
+        """Decode a batch of shots.
+        
+        Args:
+            detector_hits_batch: 2D numpy array of booleans, shape (num_shots, num_detectors)
+            
+        Returns:
+            2D numpy array of booleans, shape (num_shots, num_observables)
+        """
+        num_shots = detector_hits_batch.shape[0]
+        results = []
+        
+        for shot_idx in range(num_shots):
+            result = self.decode(detector_hits_batch[shot_idx])
+            results.append(result)
+        
+        return np.array(results)
+
+
 def create_matchable_dem_from_flags(
     original_dem: stim.DetectorErrorModel,
     flag_detectors: Set[int],
@@ -232,18 +449,7 @@ def create_matchable_dem_from_flags(
     # Stage 5: Non-triggered flags are automatically handled (not added in Stage 3)
     
     # Convert to stim.DetectorErrorModel
-    instruction_lines = []
-    for (detector_key, observable_key), prob in new_dem.items():
-        if prob > 0 and len(detector_key) > 0:  # Only include errors with non-zero probability and at least one detector
-            detectors = set(detector_key)
-            observables = set(observable_key) if observable_key else None
-            inst = _create_error_instruction(detectors, prob, observables)
-            instruction_lines.append(str(inst))
-    
-    if instruction_lines:
-        return stim.DetectorErrorModel('\n'.join(instruction_lines))
-    else:
-        return stim.DetectorErrorModel()
+    return _dem_dict_to_stim_dem(new_dem)
 
 
 def example_usage():
@@ -368,50 +574,22 @@ def compare_decoder_performance(
     errors_original = np.sum(np.any(predicted_observables_original_batch != observable_samples, axis=1))
     errors_tesseract = np.sum(np.any(predicted_observables_tesseract_batch != observable_samples, axis=1))
     
-    # For reduced DEM, we still need to process shot-by-shot since each shot
-    # may have a different reduced DEM (based on which flags were triggered)
-    print("Decoding shots with reduced DEM (per-shot processing required)...")
+    # For reduced DEM, use the optimized BayesianFlagDecoder wrapper
+    print("Decoding shots with reduced DEM (using optimized wrapper)...")
+    print("  Building BayesianFlagDecoder wrapper...")
+    start_time = time.time()
+    bayesian_decoder = BayesianFlagDecoder(original_dem, flag_detectors)
+    init_time = time.time() - start_time
+    print(f"  Initialization took {init_time:.4f} seconds")
+    
     errors_reduced = 0
     start_time = time.time()
     
-    for shot_idx in range(shots):
-        if (shot_idx + 1) % 1000 == 0:
-            print(f"  Processed {shot_idx + 1}/{shots} shots...")
-        
-        detector_hits = detector_samples[shot_idx]  # 1D array of shape (num_detectors,)
-        observable_flips = observable_samples[shot_idx]
-        triggered_detectors = set(np.where(detector_hits)[0].tolist())
-        
-        # Create reduced DEM for this shot
-        reduced_dem = create_matchable_dem_from_flags(
-            original_dem,
-            flag_detectors,
-            triggered_detectors
-        )
-
-        matching_reduced = pymatching.Matching.from_detector_error_model(reduced_dem)
-        
-        # Extract which detectors are actually used in the reduced DEM
-        reduced_dem_detector_set = set()
-        for inst in reduced_dem:
-            if inst.type == 'error':
-                reduced_dem_detector_set.update(_extract_detectors_from_instruction(inst))
-        
-        # Create mapping: original detector index -> reduced DEM index
-        # pymatching internally renumbers detectors in order they appear
-        reduced_dem_detector_list = sorted(reduced_dem_detector_set)
-        detector_map = {orig_idx: new_idx for new_idx, orig_idx in enumerate(reduced_dem_detector_list)}
-        
-        # Create reduced detector hits array
-        reduced_detector_hits = np.zeros(reduced_dem.num_detectors, dtype=bool)
-        for orig_idx, new_idx in detector_map.items():
-            if new_idx < len(reduced_detector_hits):
-                reduced_detector_hits[new_idx] = detector_hits[orig_idx]
-        
-        predicted_observables_reduced = matching_reduced.decode(reduced_detector_hits)
-        is_error_reduced = not np.array_equal(predicted_observables_reduced, observable_flips)
-        if is_error_reduced:
-            errors_reduced += 1
+    # Use batch decode
+    predicted_observables_reduced_batch = bayesian_decoder.decode_batch(detector_samples.astype(bool))
+    
+    # Count errors
+    errors_reduced = np.sum(np.any(predicted_observables_reduced_batch.astype(bool) != observable_samples, axis=1))
     
     time_reduced = time.time() - start_time
     
@@ -437,6 +615,7 @@ def compare_decoder_performance(
     print(f"   Errors: {errors_reduced}/{shots}")
     print(f"   Error rate: {error_rate_reduced:.6f}")
     print(f"   Time: {time_reduced:.4f} seconds ({time_reduced/shots*1000:.2f} ms/shot)")
+    print(f"   (Includes initialization: {init_time:.4f} seconds)")
     
     return {
         'shots': shots,
