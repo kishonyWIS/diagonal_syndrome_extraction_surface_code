@@ -238,6 +238,39 @@ def process_triggered_flags(
                 new_dem[key] = normalized_prob
 
 
+def extract_flag_detectors_from_tags(dem: stim.DetectorErrorModel, tag: str = 'flag') -> Set[int]:
+    """Extract flag detector indices from a DEM based on stim tags.
+    
+    Looks for detector instructions tagged with the specified tag. Only detector
+    instructions (not error instructions) are used to identify flag detectors.
+    Tagged error instructions indicate that those errors involve flag detectors,
+    but the specific flag detector IDs come from tagged detector instructions.
+    
+    Args:
+        dem: The detector-error-model
+        tag: Tag name to search for (default: 'flag')
+        
+    Returns:
+        Set of detector indices that are flagged (based on tags)
+    """
+    flag_detectors = set()
+    
+    for inst in dem:
+        inst_str = str(inst)
+        
+        # Check if instruction has the tag
+        tag_str = f'[{tag}]'
+        if tag_str in inst_str:
+            if inst.type == 'detector':
+                # Detector instruction with tag - extract detector ID(s)
+                detectors = _extract_detectors_from_instruction(inst)
+                flag_detectors.update(detectors)
+            # Note: Tagged error instructions indicate the error involves flags,
+            # but we don't extract flag detector IDs from them - only from detector instructions
+    
+    return flag_detectors
+
+
 class BayesianFlagDecoder:
     """Fast wrapper for pymatching that performs Bayesian flag decoding.
     
@@ -245,7 +278,12 @@ class BayesianFlagDecoder:
     creates matchable DEMs per-shot by copying the base DEM and adding conditional errors.
     """
     
-    def __init__(self, original_dem: stim.DetectorErrorModel, flag_detectors: Set[int]):
+    def __init__(
+        self, 
+        original_dem: stim.DetectorErrorModel, 
+        flag_detectors: Optional[Set[int]] = None,
+        flag_detector_tag: Optional[str] = None
+    ):
         """Initialize the Bayesian flag decoder.
         
         Precomputes:
@@ -255,23 +293,38 @@ class BayesianFlagDecoder:
         
         Args:
             original_dem: Original detector-error-model with flagged errors
-            flag_detectors: Set of flag detector indices
+            flag_detectors: Set of flag detector indices (optional, if flag_detector_tag is provided)
+            flag_detector_tag: Tag name to use for extracting flag detectors from DEM (optional)
+        
+        Raises:
+            ValueError: If neither flag_detectors nor flag_detector_tag is provided
         """
         self.original_dem = original_dem
-        self.flag_detectors = flag_detectors
+        
+        # Determine flag detectors
+        if flag_detector_tag is not None:
+            # Extract from tags
+            self.flag_detectors = extract_flag_detectors_from_tags(original_dem, flag_detector_tag)
+            if not self.flag_detectors:
+                raise ValueError(f"No flag detectors found with tag '{flag_detector_tag}' in DEM")
+        elif flag_detectors is not None:
+            # Use provided set
+            self.flag_detectors = flag_detectors
+        else:
+            raise ValueError("Must provide either flag_detectors or flag_detector_tag")
         
         # Stage 1: Precompute error groups
-        self.groups = group_errors_by_flags(original_dem, flag_detectors)
+        self.groups = group_errors_by_flags(original_dem, self.flag_detectors)
         
         # Stage 2: Precompute base DEM dictionary (non-flag errors)
-        self.base_dem_dict = add_non_flagged_errors(self.groups, flag_detectors)
+        self.base_dem_dict = add_non_flagged_errors(self.groups, self.flag_detectors)
         
         # Stage 3 preparation: Precompute conditional errors for each flag
         # For each flag, store: list of (detector_key, observable_key, normalized_prob) tuples
         # (normalized probabilities are precomputed here)
         self.flag_conditional_errors: Dict[int, List[Tuple[Tuple[int, ...], Tuple[int, ...], float]]] = {}
         
-        for flag_idx in flag_detectors:
+        for flag_idx in self.flag_detectors:
             if flag_idx not in self.groups:
                 continue
             
@@ -289,7 +342,7 @@ class BayesianFlagDecoder:
             for inst in candidate_errors:
                 detectors = _extract_detectors_from_instruction(inst)
                 observables = _extract_observables_from_instruction(inst)
-                non_flag_detectors = detectors - flag_detectors
+                non_flag_detectors = detectors - self.flag_detectors
                 
                 # Skip if removing flag leaves more than 2 detectors or empty
                 if len(non_flag_detectors) == 0 or len(non_flag_detectors) > 2:
@@ -309,7 +362,7 @@ class BayesianFlagDecoder:
         all_possible_detectors = set()
         for (detector_key, _), _ in self.base_dem_dict.items():
             all_possible_detectors.update(detector_key)
-        for flag_idx in flag_detectors:
+        for flag_idx in self.flag_detectors:
             if flag_idx in self.flag_conditional_errors:
                 for detector_key, _, _ in self.flag_conditional_errors[flag_idx]:
                     all_possible_detectors.update(detector_key)
@@ -416,42 +469,6 @@ class BayesianFlagDecoder:
         return np.array(results)
 
 
-def create_matchable_dem_from_flags(
-    original_dem: stim.DetectorErrorModel,
-    flag_detectors: Set[int],
-    triggered_detectors: Set[int]
-) -> stim.DetectorErrorModel:
-    """Create a matchable DEM from an original DEM with flagged errors.
-    
-    This is the main entry point that implements all stages of the algorithm.
-    
-    Args:
-        original_dem: Original detector-error-model with flagged errors
-        flag_detectors: Set of detector indices that are flag detectors
-        triggered_detectors: Set of all detectors triggered in the shot (including flags)
-        
-    Returns:
-        New matchable stim.DetectorErrorModel (only non-flag detectors, errors trigger ≤2 detectors)
-    """
-    # Determine which flags were triggered
-    triggered_flags = triggered_detectors & flag_detectors
-    
-    # Stage 1: Group errors by flags
-    groups = group_errors_by_flags(original_dem, flag_detectors)
-    
-    # Stage 2: Add non-flagged errors
-    new_dem = add_non_flagged_errors(groups, flag_detectors)
-    
-    # Stage 3: Process triggered flags (modifies new_dem in place)
-    process_triggered_flags(groups, triggered_flags, flag_detectors, new_dem)
-    
-    # Stage 4: Merging is now done directly in Stages 2 and 3 (errors with same detectors AND observables are merged)
-    # Stage 5: Non-triggered flags are automatically handled (not added in Stage 3)
-    
-    # Convert to stim.DetectorErrorModel
-    return _dem_dict_to_stim_dem(new_dem)
-
-
 def example_usage():
     """Demonstrate the algorithm with the example from the plan."""
     # Original DEM from example
@@ -467,12 +484,9 @@ def example_usage():
     # Shot outcome: {A, B, flag1} -> detectors {0, 1, 10}
     triggered_detectors = {0, 1, 10}
     
-    # Create matchable DEM
-    matchable_dem = create_matchable_dem_from_flags(
-        original_dem,
-        flag_detectors,
-        triggered_detectors
-    )
+    # Create decoder and get matchable DEM for this shot
+    decoder = BayesianFlagDecoder(original_dem, flag_detectors=flag_detectors)
+    matchable_dem = decoder._create_matchable_dem_for_shot(triggered_detectors)
     
     print("Original DEM:")
     print(original_dem)
@@ -502,9 +516,10 @@ def example_usage():
 
 def compare_decoder_performance(
     original_dem: stim.DetectorErrorModel,
-    flag_detectors: Set[int],
+    flag_detectors: Optional[Set[int]] = None,
     shots: int = 10000,
-    seed: Optional[int] = None
+    seed: Optional[int] = None,
+    flag_detector_tag: Optional[str] = None
 ) -> Dict[str, float]:
     """Compare logical error rates across multiple decoders.
     
@@ -515,13 +530,27 @@ def compare_decoder_performance(
     
     Args:
         original_dem: Original detector-error-model with flagged errors
-        flag_detectors: Set of flag detector indices
+        flag_detectors: Set of flag detector indices (optional, if flag_detector_tag is provided)
         shots: Number of shots to test
         seed: Optional random seed
+        flag_detector_tag: Tag name to use for extracting flag detectors from DEM (optional)
         
     Returns:
         Dictionary with error rates and statistics
+    
+    Raises:
+        ValueError: If neither flag_detectors nor flag_detector_tag is provided
     """
+    # Determine flag detectors
+    if flag_detector_tag is not None:
+        flag_detectors_set = extract_flag_detectors_from_tags(original_dem, flag_detector_tag)
+        if not flag_detectors_set:
+            raise ValueError(f"No flag detectors found with tag '{flag_detector_tag}' in DEM")
+    elif flag_detectors is not None:
+        flag_detectors_set = flag_detectors
+    else:
+        raise ValueError("Must provide either flag_detectors or flag_detector_tag")
+    
     try:
         import pymatching
         import tesseract_decoder.tesseract as tesseract
@@ -578,7 +607,10 @@ def compare_decoder_performance(
     print("Decoding shots with reduced DEM (using optimized wrapper)...")
     print("  Building BayesianFlagDecoder wrapper...")
     start_time = time.time()
-    bayesian_decoder = BayesianFlagDecoder(original_dem, flag_detectors)
+    if flag_detector_tag is not None:
+        bayesian_decoder = BayesianFlagDecoder(original_dem, flag_detector_tag=flag_detector_tag)
+    else:
+        bayesian_decoder = BayesianFlagDecoder(original_dem, flag_detectors=flag_detectors_set)
     init_time = time.time() - start_time
     print(f"  Initialization took {init_time:.4f} seconds")
     
@@ -640,7 +672,6 @@ if __name__ == "__main__":
     # Create the periodic boundary DEM for comparison
     L = 20
     p = 0.2
-    flag_detectors = {L + i for i in range(L)}  # Set of flag detectors
     
     instructions = []
     for i in range(L):
@@ -659,9 +690,11 @@ if __name__ == "__main__":
         observables = {0} if i == L - 1 else None
         instructions.append(_create_error_instruction({(i + 1) % L, (i + 2) % L, flag_detector}, p, observables))
         instructions.append(_create_error_instruction({flag_detector}, p))
+        # Tag only the detector instruction for flag detectors
+        instructions.append(stim.DemInstruction('detector', [], [stim.target_relative_detector_id(flag_detector)], tag='flag'))
     
     # Convert instructions to strings before joining
     instruction_lines = [str(inst) for inst in instructions]
     original_dem = stim.DetectorErrorModel('\n'.join(instruction_lines))
     
-    compare_decoder_performance(original_dem, flag_detectors, shots=10000, seed=42)
+    compare_decoder_performance(original_dem, flag_detector_tag='flag', shots=10000, seed=42)
