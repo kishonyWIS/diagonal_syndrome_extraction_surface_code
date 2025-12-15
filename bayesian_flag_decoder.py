@@ -48,6 +48,68 @@ def _extract_observables_from_instruction(inst: stim.DemInstruction) -> Set[int]
     return observables
 
 
+# Type alias for component-aware error keys
+# Each component is (frozenset of detectors, frozenset of observables)
+# An error key is a tuple of components (preserving ^ separator structure)
+ComponentKey = Tuple[Tuple[frozenset, frozenset], ...]
+
+
+def _parse_error_components(inst: stim.DemInstruction) -> List[Tuple[Set[int], Set[int]]]:
+    """Parse error instruction into list of (detectors, observables) per ^-separated component.
+    
+    For example, error(0.01) D0 D1 ^ D2 D3 L0 becomes:
+    [({0, 1}, set()), ({2, 3}, {0})]
+    
+    Args:
+        inst: A stim DemInstruction of type 'error'
+        
+    Returns:
+        List of (detector_set, observable_set) tuples, one per component
+    """
+    components = []
+    current_dets: Set[int] = set()
+    current_obs: Set[int] = set()
+    
+    for t in inst.targets_copy():
+        if t.is_separator():
+            # End of current component, start new one
+            components.append((current_dets, current_obs))
+            current_dets = set()
+            current_obs = set()
+        elif t.is_relative_detector_id():
+            current_dets.add(t.val)
+        elif t.is_logical_observable_id():
+            current_obs.add(t.val)
+    
+    # Don't forget the last component
+    components.append((current_dets, current_obs))
+    return components
+
+
+def _components_to_key(components: List[Tuple[Set[int], Set[int]]]) -> ComponentKey:
+    """Convert list of component sets to a hashable key.
+    
+    Args:
+        components: List of (detector_set, observable_set) tuples
+        
+    Returns:
+        Tuple of (frozenset, frozenset) tuples suitable as dict key
+    """
+    return tuple((frozenset(dets), frozenset(obs)) for dets, obs in components)
+
+
+def _key_to_components(key: ComponentKey) -> List[Tuple[Set[int], Set[int]]]:
+    """Convert hashable key back to list of component sets.
+    
+    Args:
+        key: Tuple of (frozenset, frozenset) tuples
+        
+    Returns:
+        List of (detector_set, observable_set) tuples
+    """
+    return [(set(dets), set(obs)) for dets, obs in key]
+
+
 def _dem_dict_to_stim_dem(
     dem_dict: Dict[Tuple[Tuple[int, ...], Tuple[int, ...]], float],
     ensure_detectors: Optional[Set[int]] = None
@@ -87,7 +149,7 @@ def _dem_dict_to_stim_dem(
 
 
 def _create_error_instruction(detectors: Set[int], probability: float, observables: Optional[Set[int]] = None) -> stim.DemInstruction:
-    """Create a stim DemInstruction for an error.
+    """Create a stim DemInstruction for an error (single component, no separators).
     
     Args:
         detectors: Set of detector indices
@@ -104,6 +166,91 @@ def _create_error_instruction(detectors: Set[int], probability: float, observabl
         for o in sorted(observables):
             targets.append(stim.target_logical_observable_id(o))
     return stim.DemInstruction('error', [probability], targets)
+
+
+def _create_error_with_components(
+    components: List[Tuple[Set[int], Set[int]]], 
+    probability: float
+) -> Optional[stim.DemInstruction]:
+    """Create a stim DemInstruction with ^ separators between components.
+    
+    For example, components=[({0, 1}, set()), ({2, 3}, {0})] with p=0.01 becomes:
+    error(0.01) D0 D1 ^ D2 D3 L0
+    
+    Args:
+        components: List of (detector_set, observable_set) tuples
+        probability: Error probability
+        
+    Returns:
+        A stim DemInstruction with ^ separators, or None if no valid components
+    """
+    # Filter out empty components (no detectors and no observables)
+    non_empty_components = [(dets, obs) for dets, obs in components 
+                           if len(dets) > 0 or len(obs) > 0]
+    
+    if not non_empty_components:
+        return None
+    
+    targets = []
+    for i, (dets, obs) in enumerate(non_empty_components):
+        if i > 0:
+            targets.append(stim.target_separator())
+        for d in sorted(dets):
+            targets.append(stim.target_relative_detector_id(d))
+        for o in sorted(obs):
+            targets.append(stim.target_logical_observable_id(o))
+    
+    if not targets:
+        return None
+        
+    return stim.DemInstruction('error', [probability], targets)
+
+
+def _dem_dict_with_components_to_stim_dem(
+    dem_dict: Dict[ComponentKey, float],
+    ensure_detectors: Optional[Set[int]] = None
+) -> stim.DetectorErrorModel:
+    """Convert a component-aware DEM dictionary to a stim.DetectorErrorModel.
+    
+    Preserves ^ separator structure in the output DEM.
+    
+    Args:
+        dem_dict: Dictionary mapping ComponentKey to probability
+        ensure_detectors: Optional set of detector indices to ensure are included
+        
+    Returns:
+        stim.DetectorErrorModel with ^ separators preserved
+    """
+    instructions = []
+    detectors_in_errors: Set[int] = set()
+    
+    for key, prob in dem_dict.items():
+        if prob > 0:
+            components = _key_to_components(key)
+            # Check if any component has detectors
+            has_detectors = any(len(dets) > 0 for dets, _ in components)
+            if has_detectors:
+                # Track all detectors for ensure_detectors logic
+                for dets, _ in components:
+                    detectors_in_errors.update(dets)
+                inst = _create_error_with_components(components, prob)
+                if inst is not None:
+                    instructions.append(inst)
+    
+    # Ensure all required detectors are included
+    if ensure_detectors is not None:
+        missing_detectors = ensure_detectors - detectors_in_errors
+        for det in sorted(missing_detectors):
+            # Add a very low probability boundary edge
+            inst = _create_error_instruction({det}, 1e-20)
+            instructions.append(inst)
+    
+    # Build DEM from instructions
+    if instructions:
+        dem_str = '\n'.join(str(inst) for inst in instructions)
+        return stim.DetectorErrorModel(dem_str)
+    else:
+        return stim.DetectorErrorModel()
 
 
 def group_errors_by_flags(dem: stim.DetectorErrorModel, flag_detectors: Set[int]) -> Dict[Optional[int], List[stim.DemInstruction]]:
@@ -143,15 +290,76 @@ def group_errors_by_flags(dem: stim.DetectorErrorModel, flag_detectors: Set[int]
     return dict(groups)
 
 
-def add_non_flagged_errors(
+def add_non_flagged_errors_with_components(
     groups: Dict[Optional[int], List[stim.DemInstruction]],
-    flag_detectors: Set[int]
-) -> Dict[Tuple[Tuple[int, ...], Tuple[int, ...]], float]:
-    """Stage 2: Add non-flagged errors to new DEM.
+    flag_detectors: Set[int],
+    max_detectors_per_component: Optional[int] = None
+) -> Dict[ComponentKey, float]:
+    """Stage 2: Add non-flagged errors to new DEM, preserving component structure.
     
     Args:
         groups: Error groups from Stage 1
         flag_detectors: Set of flag detector indices
+        max_detectors_per_component: Optional max detectors per component (for graphlike filtering)
+        
+    Returns:
+        Dictionary mapping ComponentKey to probability (preserves ^ structure)
+    """
+    new_dem: Dict[ComponentKey, float] = {}
+    
+    # Process errors that trigger no flags (G_0)
+    non_flagged_errors = groups.get(None, [])
+    
+    for inst in non_flagged_errors:
+        # Parse into components preserving ^ structure
+        components = _parse_error_components(inst)
+        
+        # Remove flag detectors from each component
+        filtered_components = []
+        skip_error = False
+        for dets, obs in components:
+            non_flag_dets = dets - flag_detectors
+            # Check max_detectors_per_component if specified
+            if max_detectors_per_component is not None:
+                if len(non_flag_dets) > max_detectors_per_component:
+                    skip_error = True
+                    break
+            filtered_components.append((non_flag_dets, obs))
+        
+        if skip_error:
+            continue
+        
+        # Check if any component has detectors
+        has_detectors = any(len(dets) > 0 for dets, _ in filtered_components)
+        if not has_detectors:
+            continue
+        
+        # Convert to hashable key
+        key = _components_to_key(filtered_components)
+        prob = inst.args_copy()[0]
+        
+        # Increment probability if key already exists
+        if key in new_dem:
+            new_dem[key] += prob
+        else:
+            new_dem[key] = prob
+    
+    return new_dem
+
+
+def add_non_flagged_errors(
+    groups: Dict[Optional[int], List[stim.DemInstruction]],
+    flag_detectors: Set[int],
+    max_detectors: Optional[int] = None
+) -> Dict[Tuple[Tuple[int, ...], Tuple[int, ...]], float]:
+    """Stage 2: Add non-flagged errors to new DEM (legacy, flat structure).
+    
+    DEPRECATED: Use add_non_flagged_errors_with_components for correlation support.
+    
+    Args:
+        groups: Error groups from Stage 1
+        flag_detectors: Set of flag detector indices
+        max_detectors: Optional max number of detectors per error (for graphlike filtering)
         
     Returns:
         Dictionary mapping (detector_tuple, observable_tuple) to probability
@@ -166,9 +374,10 @@ def add_non_flagged_errors(
         observables = _extract_observables_from_instruction(inst)
         non_flag_detectors = detectors - flag_detectors
         
-        # Only include if it triggers ≤2 detectors (already verified no flags in Stage 1)
-        if len(non_flag_detectors) <= 2:
-            # Error is matchable and has no flag detectors
+        # Filter by max_detectors if specified (for correlations mode)
+        if len(non_flag_detectors) > 0:
+            if max_detectors is not None and len(non_flag_detectors) > max_detectors:
+                continue  # Skip hyperedges when using correlations
             detector_key = tuple(sorted(non_flag_detectors))
             observable_key = tuple(sorted(observables)) if observables else tuple()
             key = (detector_key, observable_key)
@@ -221,11 +430,11 @@ def process_triggered_flags(
             observables = _extract_observables_from_instruction(inst)
             non_flag_detectors = detectors - flag_detectors
             
-            # Skip if removing flag leaves more than 2 detectors
-            if len(non_flag_detectors) > 2:
+            # Skip if no non-flag detectors remain
+            if len(non_flag_detectors) == 0:
                 continue
             
-            # Create key from detectors and observables
+            # Create key from detectors and observables (including hyperedges)
             detector_key = tuple(sorted(non_flag_detectors))
             observable_key = tuple(sorted(observables)) if observables else tuple()
             key = (detector_key, observable_key)
@@ -282,7 +491,9 @@ class BayesianFlagDecoder:
         self, 
         original_dem: stim.DetectorErrorModel, 
         flag_detectors: Optional[Set[int]] = None,
-        flag_detector_tag: Optional[str] = None
+        flag_detector_tag: Optional[str] = None,
+        enable_correlations: bool = False,
+        decomposed_dem: Optional[stim.DetectorErrorModel] = None
     ):
         """Initialize the Bayesian flag decoder.
         
@@ -295,11 +506,18 @@ class BayesianFlagDecoder:
             original_dem: Original detector-error-model with flagged errors
             flag_detectors: Set of flag detector indices (optional, if flag_detector_tag is provided)
             flag_detector_tag: Tag name to use for extracting flag detectors from DEM (optional)
+            enable_correlations: If True, use correlated matching in PyMatching (default: False)
+            decomposed_dem: Optional pre-decomposed DEM for use with correlations
         
         Raises:
             ValueError: If neither flag_detectors nor flag_detector_tag is provided
         """
         self.original_dem = original_dem
+        self.enable_correlations = enable_correlations
+        # Use decomposed DEM if provided (for correlations), otherwise use original
+        self.working_dem = decomposed_dem if decomposed_dem is not None else original_dem
+        # When using correlations with decomposed DEM, filter to only graphlike errors
+        self.max_detectors_per_error = 2 if enable_correlations else None
         
         # Determine flag detectors
         if flag_detector_tag is not None:
@@ -313,16 +531,19 @@ class BayesianFlagDecoder:
         else:
             raise ValueError("Must provide either flag_detectors or flag_detector_tag")
         
-        # Stage 1: Precompute error groups
-        self.groups = group_errors_by_flags(original_dem, self.flag_detectors)
+        # Stage 1: Precompute error groups (use working_dem which may be decomposed)
+        self.groups = group_errors_by_flags(self.working_dem, self.flag_detectors)
         
-        # Stage 2: Precompute base DEM dictionary (non-flag errors)
-        self.base_dem_dict = add_non_flagged_errors(self.groups, self.flag_detectors)
+        # Stage 2: Precompute base DEM dictionary (non-flag errors) with component structure
+        self.base_dem_dict: Dict[ComponentKey, float] = add_non_flagged_errors_with_components(
+            self.groups, self.flag_detectors, 
+            max_detectors_per_component=self.max_detectors_per_error
+        )
         
         # Stage 3 preparation: Precompute conditional errors for each flag
-        # For each flag, store: list of (detector_key, observable_key, normalized_prob) tuples
-        # (normalized probabilities are precomputed here)
-        self.flag_conditional_errors: Dict[int, List[Tuple[Tuple[int, ...], Tuple[int, ...], float]]] = {}
+        # For each flag, store: list of (ComponentKey, normalized_prob) tuples
+        # (normalized probabilities are precomputed here, component structure preserved)
+        self.flag_conditional_errors: Dict[int, List[Tuple[ComponentKey, float]]] = {}
         
         for flag_idx in self.flag_detectors:
             if flag_idx not in self.groups:
@@ -338,34 +559,51 @@ class BayesianFlagDecoder:
                 continue
             
             # Precompute conditional errors for this flag with normalized probabilities
-            conditional_errors = []
+            conditional_errors: List[Tuple[ComponentKey, float]] = []
             for inst in candidate_errors:
-                detectors = _extract_detectors_from_instruction(inst)
-                observables = _extract_observables_from_instruction(inst)
-                non_flag_detectors = detectors - self.flag_detectors
+                # Parse into components preserving ^ structure
+                components = _parse_error_components(inst)
                 
-                # Skip if removing flag leaves more than 2 detectors or empty
-                if len(non_flag_detectors) == 0 or len(non_flag_detectors) > 2:
+                # Remove flag detectors from each component
+                filtered_components = []
+                skip_error = False
+                for dets, obs in components:
+                    non_flag_dets = dets - self.flag_detectors
+                    # Check max_detectors_per_component if specified
+                    if self.max_detectors_per_error is not None:
+                        if len(non_flag_dets) > self.max_detectors_per_error:
+                            skip_error = True
+                            break
+                    filtered_components.append((non_flag_dets, obs))
+                
+                if skip_error:
                     continue
                 
-                detector_key = tuple(sorted(non_flag_detectors))
-                observable_key = tuple(sorted(observables)) if observables else tuple()
+                # Check if any component has detectors
+                has_detectors = any(len(dets) > 0 for dets, _ in filtered_components)
+                if not has_detectors:
+                    continue
+                
+                # Convert to hashable key
+                key = _components_to_key(filtered_components)
                 base_prob = inst.args_copy()[0]
                 normalized_prob = base_prob / z_flag  # Precompute normalized probability
                 
-                conditional_errors.append((detector_key, observable_key, normalized_prob))
+                conditional_errors.append((key, normalized_prob))
             
             self.flag_conditional_errors[flag_idx] = conditional_errors
         
         # Precompute the set of all non-flag detectors that can appear in reduced DEMs
         # This is fixed across all shots since all errors use non-flag detectors
-        all_possible_detectors = set()
-        for (detector_key, _), _ in self.base_dem_dict.items():
-            all_possible_detectors.update(detector_key)
+        all_possible_detectors: Set[int] = set()
+        for key in self.base_dem_dict.keys():
+            for dets, _ in key:
+                all_possible_detectors.update(dets)
         for flag_idx in self.flag_detectors:
             if flag_idx in self.flag_conditional_errors:
-                for detector_key, _, _ in self.flag_conditional_errors[flag_idx]:
-                    all_possible_detectors.update(detector_key)
+                for key, _ in self.flag_conditional_errors[flag_idx]:
+                    for dets, _ in key:
+                        all_possible_detectors.update(dets)
         
         # Precompute sorted list for numpy indexing
         self.non_flag_detectors = sorted(all_possible_detectors)
@@ -376,14 +614,16 @@ class BayesianFlagDecoder:
     ) -> stim.DetectorErrorModel:
         """Create a matchable DEM for a specific shot.
         
+        Preserves ^ separator structure for correlation support.
+        
         Args:
             triggered_detectors: Set of all detectors triggered in the shot (including flags)
             
         Returns:
-            Matchable stim.DetectorErrorModel for this shot
+            Matchable stim.DetectorErrorModel for this shot (with ^ separators preserved)
         """
-        # Copy base DEM dictionary
-        dem_dict = dict(self.base_dem_dict)
+        # Copy base DEM dictionary (component-aware)
+        dem_dict: Dict[ComponentKey, float] = dict(self.base_dem_dict)
         
         # Identify triggered flags
         triggered_flags = triggered_detectors & self.flag_detectors
@@ -394,19 +634,18 @@ class BayesianFlagDecoder:
                 continue
             
             # Add each conditional error with precomputed normalized probability
-            for detector_key, observable_key, normalized_prob in self.flag_conditional_errors[flag_idx]:
-                key = (detector_key, observable_key)
-                
+            for key, normalized_prob in self.flag_conditional_errors[flag_idx]:
                 # Increment probability in dem_dict
                 if key in dem_dict:
                     dem_dict[key] += normalized_prob
                 else:
                     dem_dict[key] = normalized_prob
         
-        # Convert to stim.DetectorErrorModel
+        # Convert to stim.DetectorErrorModel with ^ separators preserved
         # Ensure all possible non-flag detectors are included so detector indexing is consistent
-        # (Even if they don't appear in errors for this shot, add zero-prob boundary edges)
-        return _dem_dict_to_stim_dem(dem_dict, ensure_detectors=set(self.non_flag_detectors))
+        return _dem_dict_with_components_to_stim_dem(
+            dem_dict, ensure_detectors=set(self.non_flag_detectors)
+        )
     
     def decode(self, detector_hits: np.ndarray) -> np.ndarray:
         """Decode a single shot.
@@ -434,7 +673,10 @@ class BayesianFlagDecoder:
             return np.zeros(num_observables, dtype=bool)
         
         # Create decoder
-        matching = pymatching.Matching.from_detector_error_model(reduced_dem)
+        # If using a decomposed DEM (via decomposed_dem parameter), we can use correlations
+        matching = pymatching.Matching.from_detector_error_model(
+            reduced_dem, enable_correlations=self.enable_correlations
+        )
         
         # If no detectors in reduced DEM, return empty observable array
         if len(self.non_flag_detectors) == 0:
@@ -446,7 +688,9 @@ class BayesianFlagDecoder:
         reduced_detector_hits = detector_hits[self.non_flag_detectors_array]
         
         # Decode
-        predicted_observables = matching.decode(reduced_detector_hits)
+        predicted_observables = matching.decode(
+            reduced_detector_hits, enable_correlations=self.enable_correlations
+        )
         
         return predicted_observables
     
