@@ -53,13 +53,17 @@ def create_custom_coupling_plaquette_11(
     This plaquette interacts with the bottom-right data qubit twice, which cannot
     be expressed in RPNG notation.
     
-    Circuit (most CX/CZ gates delayed by 1 to avoid conflicts):
+    RX(aux) reset, MZ(aux) measurement - FLAG (Z-basis aux measurement).
+    (Unchanged by role exchange)
+    
+    Circuit:
         Step 0: RX(aux), RZ(bottom-right)
         Step 1: CX(aux, bottom-right)      # aux is control (NOT delayed)
-        Step 4: CZ(aux, bottom-left)
-        Step 7: CZ(aux, top-left)
+        Step 4: CZ(aux, top-left)
+        Step 5: CZ(aux, bottom-left)
         Step 8: CX(bottom-right, aux)      # data qubit is control!
-        Step 9: MZ(aux)  [optional], MZ(bottom-right) [optional]
+        Step 9: MZ(aux) [optional]
+        Step 10: MZ(bottom-right) [optional]
     
     Qubit layout (SquarePlaquetteQubits):
         - Index 0: top-left (-1, -1)
@@ -105,16 +109,16 @@ def create_custom_coupling_plaquette_11(
     circuit.append("TICK", [], [])
     circuit.append("TICK", [], [])
     
-    # Step 4: CZ between auxiliary and bottom-left
+    # Step 4: CZ between auxiliary and top-left
+    circuit.append("CZ", [AUX, TOP_LEFT], [])
+    circuit.append("TICK", [], [])
+    
+    # Step 5: CZ between auxiliary and bottom-left
     circuit.append("CZ", [AUX, BOTTOM_LEFT], [])
     circuit.append("TICK", [], [])
     
-    # Steps 5, 6: (empty)
+    # Steps 6, 7: (empty)
     circuit.append("TICK", [], [])
-    circuit.append("TICK", [], [])
-    
-    # Step 7: CZ between auxiliary and top-left
-    circuit.append("CZ", [AUX, TOP_LEFT], [])
     circuit.append("TICK", [], [])
     
     # Step 8: CX between bottom-right (control) and auxiliary (target)
@@ -178,12 +182,16 @@ def create_custom_coupling_plaquette_2(
     Same as plaquette 12 but without the gate towards top-left.
     This plaquette interacts with the bottom-right data qubit twice.
     
+    After role exchange: RZ(aux) reset, MX(aux) measurement - NOT a flag.
+    (Exchanged roles with XZX plaquette 1)
+    
     Circuit:
-        Step 0: RX(aux), RZ(bottom-right)
-        Step 1: CX(aux, bottom-right)      # aux is control (NOT delayed)
-        Step 4: CX(aux, bottom-left)
-        Step 8: CX(bottom-right, aux)      # data qubit is control!
-        Step 9: MZ(aux)  [optional], MZ(bottom-right) [optional]
+        Step 0: RZ(aux), RZ(bottom-right)
+        Step 2: CX(bottom-right, aux)      # data qubit is control!
+        Step 3: CX(aux, bottom-left)
+        Step 9: CX(aux, bottom-right)
+        Step 10: MX(aux) [optional]
+        Step 11: MZ(bottom-right) [optional]
     
     Qubit layout (SquarePlaquetteQubits):
         - Index 0: top-left (-1, -1)  -- NOT USED
@@ -195,7 +203,7 @@ def create_custom_coupling_plaquette_2(
     Args:
         reset_data: Reset basis for data qubits ('z' or None for no reset)
         measurement_data: Measurement basis for data qubits ('z' or None for no measurement)
-        measure_aux: If True, measure the auxiliary qubit at the end
+        measure_aux: If True, measure the auxiliary qubit (X-basis) at the end
         measure_shared_data: If True, measure the shared data qubit (bottom-right) in Z basis
         
     Returns:
@@ -214,39 +222,39 @@ def create_custom_coupling_plaquette_2(
     # Build the circuit
     circuit = stim.Circuit()
     
-    # Step 0: Reset auxiliary in X basis, optionally reset shared data qubit in Z basis
-    circuit.append("RX", [AUX], [])
+    # Step 0: Reset auxiliary in Z basis, optionally reset shared data qubit in Z basis
+    circuit.append("RZ", [AUX], [])
     if reset_shared_data:
         circuit.append("RZ", [BOTTOM_RIGHT], [])  # Shared qubit - reset in Z basis
     circuit.append("TICK", [], [])
     
-    # Step 1: CX between auxiliary (control) and bottom-right (target) - NOT delayed
-    circuit.append("CX", [AUX, BOTTOM_RIGHT], [])
+    # Step 1: (empty)
     circuit.append("TICK", [], [])
     
-    # Steps 2, 3: (empty - no top-left gate)
-    circuit.append("TICK", [], [])
+    # Step 2: CX between bottom-right (control) and auxiliary (target)
+    circuit.append("CX", [BOTTOM_RIGHT, AUX], [])
     circuit.append("TICK", [], [])
     
-    # Step 4: CX between auxiliary and bottom-left
+    # Step 3: CX between auxiliary and bottom-left
     circuit.append("CX", [AUX, BOTTOM_LEFT], [])
     circuit.append("TICK", [], [])
     
-    # Steps 5, 6, 7: (empty)
+    # Steps 4, 5, 6, 7, 8: (empty)
+    circuit.append("TICK", [], [])
+    circuit.append("TICK", [], [])
     circuit.append("TICK", [], [])
     circuit.append("TICK", [], [])
     circuit.append("TICK", [], [])
     
-    # Step 8: CX between bottom-right (control) and auxiliary (target)
-    circuit.append("CX", [BOTTOM_RIGHT, AUX], [])
+    # Step 9: CX between auxiliary (control) and bottom-right (target)
+    circuit.append("CX", [AUX, BOTTOM_RIGHT], [])
     
-    # Step 9: Measure auxiliary in Z basis (optional)
+    # Step 10: Measure auxiliary in X basis (optional)
     if measure_aux:
         circuit.append("TICK", [], [])
-        circuit.append("MZ", [AUX], [])
+        circuit.append("MX", [AUX], [])
     
-    # Step 10: Measure shared data qubit in Z basis (optional)
-    # This must be at step 10 (after step 9) to avoid conflict with XZX plaquettes
+    # Step 11: Measure shared data qubit in Z basis (optional)
     if measure_shared_data:
         if not measure_aux:
             circuit.append("TICK", [], [])  # Need TICK if we didn't have one for aux
@@ -255,11 +263,11 @@ def create_custom_coupling_plaquette_2(
     
     # Create scheduled circuit with explicit schedule
     if measure_shared_data:
-        schedule = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        schedule = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
     elif measure_aux:
-        schedule = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+        schedule = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     else:
-        schedule = [0, 1, 2, 3, 4, 5, 6, 7, 8]
+        schedule = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     scheduled_circuit = ScheduledCircuit.from_circuit(circuit, schedule, qubits.qubit_map)
     
     # Filter to keep only the used data qubits (2, 3) and syndrome qubit
@@ -298,13 +306,17 @@ def create_custom_coupling_plaquette_12(
     This plaquette interacts with the bottom-right data qubit twice, which cannot
     be expressed in RPNG notation.
     
+    After role exchange: RZ(aux) reset, MX(aux) measurement - NOT a flag.
+    (Exchanged roles with XZX plaquette 8)
+    
     Circuit:
-        Step 0: RX(aux), RZ(bottom-right)
-        Step 1: CX(aux, bottom-right)      # aux is control (NOT delayed)
-        Step 2: CX(aux, top-left)
-        Step 4: CX(aux, bottom-left)
-        Step 8: CX(bottom-right, aux)      # data qubit is control!
-        Step 9: MZ(aux)  [optional], MZ(bottom-right) [optional]
+        Step 0: RZ(aux), RZ(bottom-right)
+        Step 2: CX(bottom-right, aux)      # data qubit is control!
+        Step 3: CX(aux, bottom-left)
+        Step 4: CX(aux, top-left)
+        Step 9: CX(aux, bottom-right)
+        Step 10: MX(aux) [optional]
+        Step 11: MZ(bottom-right) [optional]
     
     Qubit layout (SquarePlaquetteQubits):
         - Index 0: top-left (-1, -1)
@@ -336,42 +348,42 @@ def create_custom_coupling_plaquette_12(
     # Build the circuit
     circuit = stim.Circuit()
     
-    # Step 0: Reset auxiliary in X basis, optionally reset shared data qubit in Z basis
-    circuit.append("RX", [AUX], [])
+    # Step 0: Reset auxiliary in Z basis, optionally reset shared data qubit in Z basis
+    circuit.append("RZ", [AUX], [])
     if reset_shared_data:
         circuit.append("RZ", [BOTTOM_RIGHT], [])  # Shared qubit - reset in Z basis
     circuit.append("TICK", [], [])
     
-    # Step 1: CX between auxiliary (control) and bottom-right (target) - NOT delayed
-    circuit.append("CX", [AUX, BOTTOM_RIGHT], [])
+    # Step 1: (empty)
     circuit.append("TICK", [], [])
     
-    # Step 2: CX between auxiliary and top-left
-    circuit.append("CX", [AUX, TOP_LEFT], [])
+    # Step 2: CX between bottom-right (control) and auxiliary (target)
+    circuit.append("CX", [BOTTOM_RIGHT, AUX], [])
     circuit.append("TICK", [], [])
     
-    # Step 3: (empty)
-    circuit.append("TICK", [], [])
-    
-    # Step 4: CX between auxiliary and bottom-left
+    # Step 3: CX between auxiliary and bottom-left
     circuit.append("CX", [AUX, BOTTOM_LEFT], [])
     circuit.append("TICK", [], [])
     
-    # Steps 5, 6, 7: (empty)
+    # Step 4: CX between auxiliary and top-left
+    circuit.append("CX", [AUX, TOP_LEFT], [])
+    circuit.append("TICK", [], [])
+    
+    # Steps 5, 6, 7, 8: (empty)
+    circuit.append("TICK", [], [])
     circuit.append("TICK", [], [])
     circuit.append("TICK", [], [])
     circuit.append("TICK", [], [])
     
-    # Step 8: CX between bottom-right (control) and auxiliary (target)
-    circuit.append("CX", [BOTTOM_RIGHT, AUX], [])
+    # Step 9: CX between auxiliary (control) and bottom-right (target)
+    circuit.append("CX", [AUX, BOTTOM_RIGHT], [])
     
-    # Step 9: Measure auxiliary in Z basis (optional)
+    # Step 10: Measure auxiliary in X basis (optional)
     if measure_aux:
         circuit.append("TICK", [], [])
-        circuit.append("MZ", [AUX], [])
+        circuit.append("MX", [AUX], [])
     
-    # Step 10: Measure shared data qubit in Z basis (optional)
-    # This must be at step 10 (after step 9) to avoid conflict with XZX plaquettes
+    # Step 11: Measure shared data qubit in Z basis (optional)
     if measure_shared_data:
         if not measure_aux:
             circuit.append("TICK", [], [])  # Need TICK if we didn't have one for aux
@@ -380,11 +392,11 @@ def create_custom_coupling_plaquette_12(
     
     # Create scheduled circuit with explicit schedule
     if measure_shared_data:
-        schedule = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        schedule = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
     elif measure_aux:
-        schedule = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+        schedule = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     else:
-        schedule = [0, 1, 2, 3, 4, 5, 6, 7, 8]
+        schedule = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     scheduled_circuit = ScheduledCircuit.from_circuit(circuit, schedule, qubits.qubit_map)
     
     # Filter to keep only the used data qubits (0, 2, 3) and syndrome qubit
@@ -425,25 +437,28 @@ def create_custom_coupling_plaquette_xzx_7(
     
     This plaquette interacts with the bottom-left data qubit twice.
     
+    RZ(aux) reset, MX(aux) measurement - NOT a flag (X-basis aux measurement).
+    (Unchanged by role exchange)
+    
     Circuit:
         Step 0: RZ(aux), RZ(bottom-left)
         Step 2: CX(bottom-left, aux)
         Step 5: CX(aux, top-right)
         Step 6: CX(aux, bottom-right)
         Step 9: CX(aux, bottom-left)
-        Step 10: MX(aux)  [optional]
+        Step 10: MX(aux) [optional]
     
     Qubit layout (SquarePlaquetteQubits):
         - Index 0: top-left (-1, -1)  -- NOT USED
         - Index 1: top-right (1, -1)
-        - Index 2: bottom-left (-1, 1)
+        - Index 2: bottom-left (-1, 1)  -- SHARED with ZXZ cube
         - Index 3: bottom-right (1, 1)
         - Index 4: auxiliary/syndrome (0, 0)
     
     Args:
-        reset_data: Reset basis for data qubits ('z' or None for no reset)
+        reset_data: Reset basis for data qubits ('x' or None for no reset)
         measurement_data: Measurement basis for data qubits ('x' or None for no measurement)
-        measure_aux: If True, measure the auxiliary qubit at the end
+        measure_aux: If True, measure the auxiliary qubit (X-basis) at the end
         
     Returns:
         Custom Plaquette for coupling at index 7 (XZX cube)
@@ -536,25 +551,28 @@ def create_custom_coupling_plaquette_xzx_8(
     
     This plaquette interacts with the bottom-left data qubit twice.
     
+    After role exchange: RX(aux) reset, MZ(aux) measurement - FLAG (Z-basis aux measurement).
+    (Exchanged roles with ZXZ plaquette 12)
+    
     Circuit:
-        Step 0: RZ(aux), RZ(bottom-left)
-        Step 2: CX(bottom-left, aux)
-        Step 3: CZ(aux, bottom-right)
-        Step 5: CZ(aux, top-right)
-        Step 9: CX(aux, bottom-left)
-        Step 10: MX(aux)  [optional]
+        Step 0: RX(aux), RZ(bottom-left)
+        Step 1: CX(aux, bottom-left)       # aux is control
+        Step 2: CZ(aux, bottom-right)
+        Step 3: CZ(aux, top-right)
+        Step 8: CX(bottom-left, aux)       # data qubit is control!
+        Step 9: MZ(aux) [optional]
     
     Qubit layout (SquarePlaquetteQubits):
         - Index 0: top-left (-1, -1)  -- NOT USED
         - Index 1: top-right (1, -1)
-        - Index 2: bottom-left (-1, 1)
+        - Index 2: bottom-left (-1, 1)  -- SHARED with ZXZ cube
         - Index 3: bottom-right (1, 1)
         - Index 4: auxiliary/syndrome (0, 0)
     
     Args:
         reset_data: Reset basis for data qubits ('x' or None for no reset)
         measurement_data: Measurement basis for data qubits ('x' or None for no measurement)
-        measure_aux: If True, measure the auxiliary qubit at the end
+        measure_aux: If True, measure the auxiliary qubit (Z-basis) at the end - FLAG
         
     Returns:
         Custom Plaquette for coupling at index 8 (XZX cube)
@@ -573,45 +591,40 @@ def create_custom_coupling_plaquette_xzx_8(
     # Build the circuit
     circuit = stim.Circuit()
     
-    # Step 0: Reset auxiliary in Z basis, optionally reset shared data qubit in Z basis
-    circuit.append("RZ", [AUX], [])
+    # Step 0: Reset auxiliary in X basis, optionally reset shared data qubit in Z basis
+    circuit.append("RX", [AUX], [])
     if reset_shared_data:
         circuit.append("RZ", [BOTTOM_LEFT], [])  # Shared qubit - reset in Z basis
     circuit.append("TICK", [], [])
     
-    # Step 1: (empty)
+    # Step 1: CX between auxiliary (control) and bottom-left (target)
+    circuit.append("CX", [AUX, BOTTOM_LEFT], [])
     circuit.append("TICK", [], [])
     
-    # Step 2: CX between bottom-left (control) and auxiliary (target)
-    circuit.append("CX", [BOTTOM_LEFT, AUX], [])
-    circuit.append("TICK", [], [])
-    
-    # Step 3: CZ between auxiliary and bottom-right
+    # Step 2: CZ with bottom-right
     circuit.append("CZ", [AUX, BOTTOM_RIGHT], [])
     circuit.append("TICK", [], [])
     
-    # Step 4: (empty)
-    circuit.append("TICK", [], [])
-    
-    # Step 5: CZ between auxiliary and top-right
+    # Step 3: CZ between auxiliary and top-right
     circuit.append("CZ", [AUX, TOP_RIGHT], [])
     circuit.append("TICK", [], [])
     
-    # Steps 6, 7, 8: (empty)
+    # Steps 4, 5, 6, 7: (empty)
+    circuit.append("TICK", [], [])
     circuit.append("TICK", [], [])
     circuit.append("TICK", [], [])
     circuit.append("TICK", [], [])
     
-    # Step 9: CX between auxiliary and bottom-left
-    circuit.append("CX", [AUX, BOTTOM_LEFT], [])
+    # Step 8: CX between bottom-left (control) and auxiliary (target)
+    circuit.append("CX", [BOTTOM_LEFT, AUX], [])
     
-    # Step 10: Measure auxiliary in X basis (optional)
+    # Step 9: Measure auxiliary in Z basis (optional)
     if measure_aux:
         circuit.append("TICK", [], [])
-        circuit.append("MX", [AUX], [])
+        circuit.append("MZ", [AUX], [])
     
     # Create scheduled circuit with explicit schedule
-    schedule = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10] if measure_aux else [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    schedule = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] if measure_aux else [0, 1, 2, 3, 4, 5, 6, 7, 8]
     scheduled_circuit = ScheduledCircuit.from_circuit(circuit, schedule, qubits.qubit_map)
     
     # Filter to keep only the used data qubits (1, 2, 3) and syndrome qubit
@@ -648,24 +661,27 @@ def create_custom_coupling_plaquette_xzx_1(
     Same as plaquette 8 but without the gate towards top-right.
     This plaquette interacts with the bottom-left data qubit twice.
     
+    After role exchange: RX(aux) reset, MZ(aux) measurement - FLAG (Z-basis aux measurement).
+    (Exchanged roles with ZXZ plaquette 2)
+    
     Circuit:
-        Step 0: RZ(aux), RZ(bottom-left)
-        Step 2: CX(bottom-left, aux)
-        Step 3: CZ(aux, bottom-right)
-        Step 9: CX(aux, bottom-left)
-        Step 10: MX(aux)  [optional]
+        Step 0: RX(aux), RZ(bottom-left)
+        Step 1: CX(aux, bottom-left)       # aux is control
+        Step 2: CZ(aux, bottom-right)
+        Step 8: CX(bottom-left, aux)       # data qubit is control!
+        Step 9: MZ(aux) [optional]
     
     Qubit layout (SquarePlaquetteQubits):
         - Index 0: top-left (-1, -1)  -- NOT USED
         - Index 1: top-right (1, -1)  -- NOT USED
-        - Index 2: bottom-left (-1, 1)
+        - Index 2: bottom-left (-1, 1)  -- SHARED with ZXZ cube
         - Index 3: bottom-right (1, 1)
         - Index 4: auxiliary/syndrome (0, 0)
     
     Args:
         reset_data: Reset basis for data qubits ('x' or None for no reset)
         measurement_data: Measurement basis for data qubits ('x' or None for no measurement)
-        measure_aux: If True, measure the auxiliary qubit at the end
+        measure_aux: If True, measure the auxiliary qubit (Z-basis) at the end - FLAG
         
     Returns:
         Custom Plaquette for coupling at index 1 (XZX cube)
@@ -683,40 +699,37 @@ def create_custom_coupling_plaquette_xzx_1(
     # Build the circuit
     circuit = stim.Circuit()
     
-    # Step 0: Reset auxiliary in Z basis, optionally reset shared data qubit in Z basis
-    circuit.append("RZ", [AUX], [])
+    # Step 0: Reset auxiliary in X basis, optionally reset shared data qubit in Z basis
+    circuit.append("RX", [AUX], [])
     if reset_shared_data:
         circuit.append("RZ", [BOTTOM_LEFT], [])  # Shared qubit - reset in Z basis
     circuit.append("TICK", [], [])
     
-    # Step 1: (empty)
+    # Step 1: CX between auxiliary (control) and bottom-left (target)
+    circuit.append("CX", [AUX, BOTTOM_LEFT], [])
     circuit.append("TICK", [], [])
     
-    # Step 2: CX between bottom-left (control) and auxiliary (target)
-    circuit.append("CX", [BOTTOM_LEFT, AUX], [])
-    circuit.append("TICK", [], [])
-    
-    # Step 3: CZ between auxiliary and bottom-right
+    # Step 2: CZ with bottom-right
     circuit.append("CZ", [AUX, BOTTOM_RIGHT], [])
     circuit.append("TICK", [], [])
     
-    # Steps 4, 5, 6, 7, 8: (empty - no top-right gate)
+    # Steps 3, 4, 5, 6, 7: (empty - no top-right gate)
     circuit.append("TICK", [], [])
     circuit.append("TICK", [], [])
     circuit.append("TICK", [], [])
     circuit.append("TICK", [], [])
     circuit.append("TICK", [], [])
     
-    # Step 9: CX between auxiliary and bottom-left
-    circuit.append("CX", [AUX, BOTTOM_LEFT], [])
+    # Step 8: CX between bottom-left (control) and auxiliary (target)
+    circuit.append("CX", [BOTTOM_LEFT, AUX], [])
     
-    # Step 10: Measure auxiliary in X basis (optional)
+    # Step 9: Measure auxiliary in Z basis (optional)
     if measure_aux:
         circuit.append("TICK", [], [])
-        circuit.append("MX", [AUX], [])
+        circuit.append("MZ", [AUX], [])
     
     # Create scheduled circuit with explicit schedule
-    schedule = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10] if measure_aux else [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    schedule = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] if measure_aux else [0, 1, 2, 3, 4, 5, 6, 7, 8]
     scheduled_circuit = ScheduledCircuit.from_circuit(circuit, schedule, qubits.qubit_map)
     
     # Filter to keep only the used data qubits (2, 3) and syndrome qubit
@@ -746,7 +759,8 @@ def create_zxz_plaquettes(
     reset: str | None = None,
     measurement: str | None = None,
     use_custom_coupling: bool = False,
-    measure_coupling_aux: bool = True,
+    measure_coupling_aux_mz: bool = True,
+    measure_coupling_aux_mx: bool = True,
     measure_shared_data: bool = False,
     reset_shared_data: bool = True,
 ) -> Plaquettes:
@@ -772,11 +786,17 @@ def create_zxz_plaquettes(
     - 11,12: right boundary (11=Z active, 12=empty)
     - 13,14: bottom boundary (13=empty, 14=X active)
     
+    Custom coupling plaquettes (after role exchange):
+    - Plaquette 11: MZ(aux) - controlled by measure_coupling_aux_mz (FLAG)
+    - Plaquettes 2, 12: MX(aux) - controlled by measure_coupling_aux_mx (not flags)
+    
     Args:
         translator: RPNG translator
         reset: Reset basis ('x' or 'z') to apply to data qubits, or None
         measurement: Measurement basis ('x' or 'z') to apply to data qubits, or None
-        use_custom_coupling: If True, use custom coupling plaquette for index 11
+        use_custom_coupling: If True, use custom coupling plaquettes for indices 2, 11, 12
+        measure_coupling_aux_mz: If True, measure Z-basis aux (plaquette 11) - these are FLAGS
+        measure_coupling_aux_mx: If True, measure X-basis aux (plaquettes 2, 12)
     """
     r = reset if reset else "-"
     m = measurement if measurement else "-"
@@ -792,26 +812,26 @@ def create_zxz_plaquettes(
         3: RPNGDescription.empty(),
         4: RPNGDescription.empty(),
         
-        # Top boundary - X-basis 2-body (positions 2,3 → timings 4,3)
-        5: RPNGDescription.from_string(f"---- ---- {r}x4{m} {r}x3{m}"),
+        # Top boundary - X-basis 2-body (positions 2,3 → timings 4,6 from X schedule 7,5,4,6)
+        5: RPNGDescription.from_string(f"---- ---- {r}x4{m} {r}x6{m}"),
         6: RPNGDescription.empty(),
         
-        # Left boundary - Z-basis 2-body (positions 1,3 → timings 5,6)
+        # Left boundary - Z-basis 2-body (positions 1,3 → timings 3,2 from Z schedule 1,3,4,2)
         7: RPNGDescription.empty(),
-        8: RPNGDescription.from_string(f"---- {r}z5{m} ---- {r}z6{m}"),
+        8: RPNGDescription.from_string(f"---- {r}z3{m} ---- {r}z2{m}"),
         
-        # Bulk plaquettes (diagonal schedules, delayed by 1)
-        9: RPNGDescription.from_string(f"{r}z7{m} {r}z5{m} {r}z4{m} {r}z6{m}"),   # Z-basis: 7,5,4,6
-        10: RPNGDescription.from_string(f"{r}x2{m} {r}x5{m} {r}x4{m} {r}x3{m}"),  # X-basis: 2,5,4,3
+        # Bulk plaquettes (same schedule for both cubes)
+        9: RPNGDescription.from_string(f"{r}z1{m} {r}z3{m} {r}z4{m} {r}z2{m}"),   # Z-basis: 1,3,4,2
+        10: RPNGDescription.from_string(f"{r}x7{m} {r}x5{m} {r}x4{m} {r}x6{m}"),  # X-basis: 7,5,4,6
         
-        # Right boundary - Z-basis 2-body (positions 0,2 → timings 7,4)
+        # Right boundary - Z-basis 2-body (positions 0,2 → timings 1,4 from Z schedule 1,3,4,2)
         # Index 11 may be replaced with custom coupling plaquette
-        11: RPNGDescription.from_string(f"{r}z7{m} ---- {r}z4{m} ----"),
+        11: RPNGDescription.from_string(f"{r}z1{m} ---- {r}z4{m} ----"),
         12: RPNGDescription.empty(),
         
-        # Bottom boundary - X-basis 2-body (positions 0,1 → timings 2,5)
+        # Bottom boundary - X-basis 2-body (positions 0,1 → timings 7,5 from X schedule 7,5,4,6)
         13: RPNGDescription.empty(),
-        14: RPNGDescription.from_string(f"{r}x2{m} {r}x5{m} ---- ----"),
+        14: RPNGDescription.from_string(f"{r}x7{m} {r}x5{m} ---- ----"),
     }
     
     plaquette_collection = {
@@ -821,24 +841,27 @@ def create_zxz_plaquettes(
     
     # Replace indices 2, 11, and 12 with custom coupling plaquettes if requested
     if use_custom_coupling:
+        # Plaquette 2: MX(aux) - controlled by measure_coupling_aux_mx
         plaquette_collection[2] = create_custom_coupling_plaquette_2(
             reset_data=reset,
             measurement_data=measurement,
-            measure_aux=measure_coupling_aux,
+            measure_aux=measure_coupling_aux_mx,
             measure_shared_data=measure_shared_data,
             reset_shared_data=reset_shared_data,
         )
+        # Plaquette 11: MZ(aux) - controlled by measure_coupling_aux_mz (FLAG)
         plaquette_collection[11] = create_custom_coupling_plaquette_11(
             reset_data=reset,
             measurement_data=measurement,
-            measure_aux=measure_coupling_aux,
+            measure_aux=measure_coupling_aux_mz,
             measure_shared_data=measure_shared_data,
             reset_shared_data=reset_shared_data,
         )
+        # Plaquette 12: MX(aux) - controlled by measure_coupling_aux_mx
         plaquette_collection[12] = create_custom_coupling_plaquette_12(
             reset_data=reset,
             measurement_data=measurement,
-            measure_aux=measure_coupling_aux,
+            measure_aux=measure_coupling_aux_mx,
             measure_shared_data=measure_shared_data,
             reset_shared_data=reset_shared_data,
         )
@@ -852,7 +875,8 @@ def create_xzx_plaquettes(
     reset: str | None = None,
     measurement: str | None = None,
     use_custom_coupling: bool = False,
-    measure_coupling_aux: bool = True,
+    measure_coupling_aux_mz: bool = True,
+    measure_coupling_aux_mx: bool = True,
     reset_shared_data: bool = True,
 ) -> Plaquettes:
     """
@@ -877,11 +901,17 @@ def create_xzx_plaquettes(
     - 11,12: right boundary (11=empty, 12=X active) - opposite of ZXZ
     - 13,14: bottom boundary (13=Z active, 14=empty) - opposite of ZXZ
     
+    Custom coupling plaquettes (after role exchange):
+    - Plaquettes 1, 8: MZ(aux) - controlled by measure_coupling_aux_mz (FLAGS)
+    - Plaquette 7: MX(aux) - controlled by measure_coupling_aux_mx (not a flag)
+    
     Args:
         translator: RPNG translator
         reset: Reset basis ('x' or 'z') to apply to data qubits, or None
         measurement: Measurement basis ('x' or 'z') to apply to data qubits, or None
         use_custom_coupling: If True, use custom coupling plaquettes for indices 1, 7, 8
+        measure_coupling_aux_mz: If True, measure Z-basis aux (plaquettes 1, 8) - these are FLAGS
+        measure_coupling_aux_mx: If True, measure X-basis aux (plaquette 7)
     """
     r = reset if reset else "-"
     m = measurement if measurement else "-"
@@ -897,24 +927,24 @@ def create_xzx_plaquettes(
         3: RPNGDescription.empty(),
         4: RPNGDescription.empty(),
         
-        # Top boundary - Z-basis 2-body (positions 2,3 → timings 4,3)
+        # Top boundary - Z-basis 2-body (positions 2,3 → timings 4,2 from Z schedule 1,3,4,2)
         5: RPNGDescription.empty(),
-        6: RPNGDescription.from_string(f"---- ---- {r}z4{m} {r}z3{m}"),
+        6: RPNGDescription.from_string(f"---- ---- {r}z4{m} {r}z2{m}"),
         
-        # Left boundary - X-basis 2-body (positions 1,3 → timings 5,6)
+        # Left boundary - X-basis 2-body (positions 1,3 → timings 5,6 from X schedule 7,5,4,6)
         7: RPNGDescription.from_string(f"---- {r}x5{m} ---- {r}x6{m}"),
         8: RPNGDescription.empty(),
         
-        # Bulk plaquettes (diagonal schedules - opposite of ZXZ, delayed by 1)
-        9: RPNGDescription.from_string(f"{r}z2{m} {r}z5{m} {r}z4{m} {r}z3{m}"),   # Z-basis: 2,5,4,3
+        # Bulk plaquettes (same schedule for both cubes)
+        9: RPNGDescription.from_string(f"{r}z1{m} {r}z3{m} {r}z4{m} {r}z2{m}"),   # Z-basis: 1,3,4,2
         10: RPNGDescription.from_string(f"{r}x7{m} {r}x5{m} {r}x4{m} {r}x6{m}"),  # X-basis: 7,5,4,6
         
-        # Right boundary - X-basis 2-body (positions 0,2 → timings 7,4)
+        # Right boundary - X-basis 2-body (positions 0,2 → timings 7,4 from X schedule 7,5,4,6)
         11: RPNGDescription.empty(),
         12: RPNGDescription.from_string(f"{r}x7{m} ---- {r}x4{m} ----"),
         
-        # Bottom boundary - Z-basis 2-body (positions 0,1 → timings 2,5)
-        13: RPNGDescription.from_string(f"{r}z2{m} {r}z5{m} ---- ----"),
+        # Bottom boundary - Z-basis 2-body (positions 0,1 → timings 1,3 from Z schedule 1,3,4,2)
+        13: RPNGDescription.from_string(f"{r}z1{m} {r}z3{m} ---- ----"),
         14: RPNGDescription.empty(),
     }
     
@@ -925,22 +955,25 @@ def create_xzx_plaquettes(
     
     # Replace indices 1, 7, and 8 with custom coupling plaquettes if requested
     if use_custom_coupling:
+        # Plaquette 1: MZ(aux) - controlled by measure_coupling_aux_mz (FLAG)
         plaquette_collection[1] = create_custom_coupling_plaquette_xzx_1(
             reset_data=reset,
             measurement_data=measurement,
-            measure_aux=measure_coupling_aux,
+            measure_aux=measure_coupling_aux_mz,
             reset_shared_data=reset_shared_data,
         )
+        # Plaquette 7: MX(aux) - controlled by measure_coupling_aux_mx
         plaquette_collection[7] = create_custom_coupling_plaquette_xzx_7(
             reset_data=reset,
             measurement_data=measurement,
-            measure_aux=measure_coupling_aux,
+            measure_aux=measure_coupling_aux_mx,
             reset_shared_data=reset_shared_data,
         )
+        # Plaquette 8: MZ(aux) - controlled by measure_coupling_aux_mz (FLAG)
         plaquette_collection[8] = create_custom_coupling_plaquette_xzx_8(
             reset_data=reset,
             measurement_data=measurement,
-            measure_aux=measure_coupling_aux,
+            measure_aux=measure_coupling_aux_mz,
             reset_shared_data=reset_shared_data,
         )
     
@@ -1076,8 +1109,8 @@ def create_layer_tree(
 def generate_two_cube_circuit(
     k: int = 2,
     noise_model: NoiseModel | None = None,
-    measure_zxz_coupling_aux: bool = True,
-    measure_xzx_coupling_aux: bool = True,
+    measure_coupling_aux_mz: bool = True,
+    measure_coupling_aux_mx: bool = True,
     measure_shared_data: bool = False,
     measure_shared_data_final_only: bool = False,
     manhattan_radius: int = 2,
@@ -1089,11 +1122,15 @@ def generate_two_cube_circuit(
     
     The cubes are decoupled (no pipe connecting them).
     
+    Custom coupling plaquettes (after role exchange):
+    - Z-basis aux measurements (FLAGS): ZXZ plaquette 11, XZX plaquettes 1, 8
+    - X-basis aux measurements: ZXZ plaquettes 2, 12, XZX plaquette 7
+    
     Args:
         k: Scaling factor (code distance ≈ 2k+1)
         noise_model: Optional noise model to apply to the circuit
-        measure_zxz_coupling_aux: If True, measure auxiliary qubits in ZXZ coupling plaquettes
-        measure_xzx_coupling_aux: If True, measure auxiliary qubits in XZX coupling plaquettes
+        measure_coupling_aux_mz: If True, measure Z-basis aux (plaquettes 11, 1, 8) - these are FLAGS
+        measure_coupling_aux_mx: If True, measure X-basis aux (plaquettes 2, 12, 7)
         measure_shared_data: If True, measure the shared data qubits at the boundary in Z basis
         measure_shared_data_final_only: If True, only measure shared data in the final (meas) layer
         manhattan_radius: Parameter for automatic detector computation. Set to 0 to disable.
@@ -1116,14 +1153,14 @@ def generate_two_cube_circuit(
     reset_shared_bulk = not measure_shared_data_final_only  # Don't reset in bulk if final_only
     reset_shared_meas = False  # Never reset in meas - about to measure them
     
-    zxz_init = create_zxz_plaquettes(translator, reset="z", use_custom_coupling=True, measure_coupling_aux=measure_zxz_coupling_aux, measure_shared_data=measure_shared_init_bulk, reset_shared_data=reset_shared_init)
-    zxz_bulk = create_zxz_plaquettes(translator, use_custom_coupling=True, measure_coupling_aux=measure_zxz_coupling_aux, measure_shared_data=measure_shared_init_bulk, reset_shared_data=reset_shared_bulk)
-    zxz_meas = create_zxz_plaquettes(translator, measurement="z", use_custom_coupling=True, measure_coupling_aux=measure_zxz_coupling_aux, measure_shared_data=measure_shared_meas, reset_shared_data=reset_shared_meas)
+    zxz_init = create_zxz_plaquettes(translator, reset="z", use_custom_coupling=True, measure_coupling_aux_mz=measure_coupling_aux_mz, measure_coupling_aux_mx=measure_coupling_aux_mx, measure_shared_data=measure_shared_init_bulk, reset_shared_data=reset_shared_init)
+    zxz_bulk = create_zxz_plaquettes(translator, use_custom_coupling=True, measure_coupling_aux_mz=measure_coupling_aux_mz, measure_coupling_aux_mx=measure_coupling_aux_mx, measure_shared_data=measure_shared_init_bulk, reset_shared_data=reset_shared_bulk)
+    zxz_meas = create_zxz_plaquettes(translator, measurement="z", use_custom_coupling=True, measure_coupling_aux_mz=measure_coupling_aux_mz, measure_coupling_aux_mx=measure_coupling_aux_mx, measure_shared_data=measure_shared_meas, reset_shared_data=reset_shared_meas)
     
     # Create plaquettes for XZX cube at (1, 0) - stores X
-    xzx_init = create_xzx_plaquettes(translator, reset="x", use_custom_coupling=True, measure_coupling_aux=measure_xzx_coupling_aux, reset_shared_data=reset_shared_init)
-    xzx_bulk = create_xzx_plaquettes(translator, use_custom_coupling=True, measure_coupling_aux=measure_xzx_coupling_aux, reset_shared_data=reset_shared_bulk)
-    xzx_meas = create_xzx_plaquettes(translator, measurement="x", use_custom_coupling=True, measure_coupling_aux=measure_xzx_coupling_aux, reset_shared_data=reset_shared_meas)
+    xzx_init = create_xzx_plaquettes(translator, reset="x", use_custom_coupling=True, measure_coupling_aux_mz=measure_coupling_aux_mz, measure_coupling_aux_mx=measure_coupling_aux_mx, reset_shared_data=reset_shared_init)
+    xzx_bulk = create_xzx_plaquettes(translator, use_custom_coupling=True, measure_coupling_aux_mz=measure_coupling_aux_mz, measure_coupling_aux_mx=measure_coupling_aux_mx, reset_shared_data=reset_shared_bulk)
+    xzx_meas = create_xzx_plaquettes(translator, measurement="x", use_custom_coupling=True, measure_coupling_aux_mz=measure_coupling_aux_mz, measure_coupling_aux_mx=measure_coupling_aux_mx, reset_shared_data=reset_shared_meas)
     
     # Create cube plaquettes dict: position -> (init, bulk, meas)
     cube_plaquettes = {
@@ -1391,9 +1428,14 @@ def generate_two_cube_circuit_with_flag_detectors(
     3. Map detectors from step 1 to step 2, and add simple single-measurement
        detectors for each flag measurement (tagged with "flag")
     
-    Flag measurements are:
-    - Auxiliary qubit measurements of ZXZ custom plaquettes (indices 2, 11, 12)
-    - Shared data qubit measurements
+    Flag measurements are Z-basis auxiliary qubit measurements:
+    - ZXZ plaquette 11: MZ(aux) - FLAG
+    - XZX plaquettes 1, 8: MZ(aux) - FLAGS
+    - Shared data qubit measurements (Z-basis)
+    
+    Non-flag coupling measurements are X-basis auxiliary qubit measurements:
+    - ZXZ plaquettes 2, 12: MX(aux)
+    - XZX plaquette 7: MX(aux)
     
     Flag detectors are tagged with "flag" and can be extracted using
     get_flag_detector_indices_from_circuit().
@@ -1410,22 +1452,26 @@ def generate_two_cube_circuit_with_flag_detectors(
         - Properly mapped observable
     """
     # Step 1: Generate circuit WITHOUT flags to get good detectors
+    # - No Z-basis aux measurements (these are the flags)
+    # - Yes X-basis aux measurements (these are not flags)
     circuit_no_flags = generate_two_cube_circuit(
         k=k,
         noise_model=None,  # No noise yet - apply at the end
-        measure_zxz_coupling_aux=False,
-        measure_xzx_coupling_aux=True,
+        measure_coupling_aux_mz=False,  # No flags: MZ aux not measured
+        measure_coupling_aux_mx=True,   # MX aux measured (not flags)
         measure_shared_data=False,
         measure_shared_data_final_only=measure_shared_data_final_only,
         manhattan_radius=2,  # Normal detector computation
     )
     
     # Step 2: Generate circuit WITH flags, but skip automatic detectors
+    # - Yes Z-basis aux measurements (these are the flags)
+    # - Yes X-basis aux measurements (these are not flags)
     circuit_with_flags = generate_two_cube_circuit(
         k=k,
         noise_model=None,  # No noise yet
-        measure_zxz_coupling_aux=True,
-        measure_xzx_coupling_aux=True,
+        measure_coupling_aux_mz=True,   # Flags: MZ aux measured
+        measure_coupling_aux_mx=True,   # MX aux measured (not flags)
         measure_shared_data=True,
         measure_shared_data_final_only=measure_shared_data_final_only,
         manhattan_radius=0,  # Disable automatic detector computation
@@ -1505,7 +1551,7 @@ def main():
     circuit = generate_two_cube_circuit_with_flag_detectors(
         k=k,
         noise_model=noise_model,
-        measure_shared_data_final_only=False,
+        measure_shared_data_final_only=True,
     )
     
     # Extract flag detector info from tags

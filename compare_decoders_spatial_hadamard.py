@@ -75,8 +75,8 @@ def compare_decoders(
         circuit = generate_two_cube_circuit(
             k=k,
             noise_model=noise_model,
-            measure_zxz_coupling_aux=False,
-            measure_xzx_coupling_aux=True,
+            measure_coupling_aux_mz=False,  # No Z-basis aux (no flags)
+            measure_coupling_aux_mx=True,   # Keep X-basis aux
             measure_shared_data=False,
             measure_shared_data_final_only=measure_shared_data_final_only,
         )
@@ -117,7 +117,7 @@ def compare_decoders(
     print()
     
     results = {}
-
+    
     # =========================================================================
     # Decoder 1: Plain pymatching
     # =========================================================================
