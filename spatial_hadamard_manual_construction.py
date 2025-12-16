@@ -6,6 +6,16 @@ This bypasses the BlockGraph abstraction and directly defines plaquette layouts
 with custom RPNG descriptions to generate a stim circuit.
 """
 
+# Set MEASUREMENT_SCHEDULE BEFORE importing any tqec modules
+# This controls when bulk plaquette measurements happen
+import tqec.plaquette.constants as constants
+constants.MEASUREMENT_SCHEDULE = 8  # All measurements at step 8
+
+# Reload the translator module to pick up the new MEASUREMENT_SCHEDULE
+import importlib
+import tqec.plaquette.rpng.translators.default as default_translator
+importlib.reload(default_translator)
+
 import stim
 from tqec import NoiseModel
 from tqec.compile.blocks.layers.atomic.layout import LayoutLayer
@@ -58,12 +68,11 @@ def create_custom_coupling_plaquette_11(
     
     Circuit:
         Step 0: RX(aux), RZ(bottom-right)
-        Step 1: CX(aux, bottom-right)      # aux is control (NOT delayed)
+        Step 1: CX(aux, bottom-right)      # aux is control
         Step 4: CZ(aux, top-left)
         Step 5: CZ(aux, bottom-left)
-        Step 8: CX(bottom-right, aux)      # data qubit is control!
-        Step 9: MZ(aux) [optional]
-        Step 10: MZ(bottom-right) [optional]
+        Step 6: CX(bottom-right, aux)      # data qubit is control!
+        Step 8: MZ(aux), MZ(bottom-right)  # all measurements simultaneously
     
     Qubit layout (SquarePlaquetteQubits):
         - Index 0: top-left (-1, -1)
@@ -117,33 +126,24 @@ def create_custom_coupling_plaquette_11(
     circuit.append("CZ", [AUX, BOTTOM_LEFT], [])
     circuit.append("TICK", [], [])
     
-    # Steps 6, 7: (empty)
-    circuit.append("TICK", [], [])
-    circuit.append("TICK", [], [])
-    
-    # Step 8: CX between bottom-right (control) and auxiliary (target)
+    # Step 6: CX between bottom-right (control) and auxiliary (target) - moved from step 8
     circuit.append("CX", [BOTTOM_RIGHT, AUX], [])
+    circuit.append("TICK", [], [])
     
-    # Step 9: Measure auxiliary in Z basis (optional)
+    # Step 7: (empty - wait for other plaquettes, only needed if measurements follow)
+    # Step 8: All measurements simultaneously
+    if measure_aux or measure_shared_data:
+        circuit.append("TICK", [], [])  # Step 7 wait
     if measure_aux:
-        circuit.append("TICK", [], [])
         circuit.append("MZ", [AUX], [])
-    
-    # Step 10: Measure shared data qubit in Z basis (optional)
-    # This must be at step 10 (after step 9) to avoid conflict with XZX plaquettes
     if measure_shared_data:
-        if not measure_aux:
-            circuit.append("TICK", [], [])  # Need TICK if we didn't have one for aux
-        circuit.append("TICK", [], [])
         circuit.append("MZ", [BOTTOM_RIGHT], [])
     
     # Create scheduled circuit with explicit schedule
-    if measure_shared_data:
-        schedule = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-    elif measure_aux:
-        schedule = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
-    else:
+    if measure_aux or measure_shared_data:
         schedule = [0, 1, 2, 3, 4, 5, 6, 7, 8]
+    else:
+        schedule = [0, 1, 2, 3, 4, 5, 6, 7]
     scheduled_circuit = ScheduledCircuit.from_circuit(circuit, schedule, qubits.qubit_map)
     
     # Filter to keep only the used data qubits (0, 2, 3) and syndrome qubit
@@ -189,9 +189,8 @@ def create_custom_coupling_plaquette_2(
         Step 0: RZ(aux), RZ(bottom-right)
         Step 2: CX(bottom-right, aux)      # data qubit is control!
         Step 3: CX(aux, bottom-left)
-        Step 9: CX(aux, bottom-right)
-        Step 10: MX(aux) [optional]
-        Step 11: MZ(bottom-right) [optional]
+        Step 7: CX(aux, bottom-right)
+        Step 8: MX(aux), MZ(bottom-right)  # all measurements simultaneously
     
     Qubit layout (SquarePlaquetteQubits):
         - Index 0: top-left (-1, -1)  -- NOT USED
@@ -239,35 +238,25 @@ def create_custom_coupling_plaquette_2(
     circuit.append("CX", [AUX, BOTTOM_LEFT], [])
     circuit.append("TICK", [], [])
     
-    # Steps 4, 5, 6, 7, 8: (empty)
-    circuit.append("TICK", [], [])
-    circuit.append("TICK", [], [])
+    # Steps 4, 5, 6: (empty)
     circuit.append("TICK", [], [])
     circuit.append("TICK", [], [])
     circuit.append("TICK", [], [])
     
-    # Step 9: CX between auxiliary (control) and bottom-right (target)
+    # Step 7: CX between auxiliary (control) and bottom-right (target) - moved from step 9
     circuit.append("CX", [AUX, BOTTOM_RIGHT], [])
     
-    # Step 10: Measure auxiliary in X basis (optional)
-    if measure_aux:
+    # Step 8: All measurements simultaneously (only add TICK if measurements follow)
+    if measure_aux or measure_shared_data:
         circuit.append("TICK", [], [])
-        circuit.append("MX", [AUX], [])
-    
-    # Step 11: Measure shared data qubit in Z basis (optional)
+        if measure_aux:
+            circuit.append("MX", [AUX], [])
     if measure_shared_data:
-        if not measure_aux:
-            circuit.append("TICK", [], [])  # Need TICK if we didn't have one for aux
-        circuit.append("TICK", [], [])
         circuit.append("MZ", [BOTTOM_RIGHT], [])
     
     # Create scheduled circuit with explicit schedule
-    if measure_shared_data:
-        schedule = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
-    elif measure_aux:
-        schedule = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-    else:
-        schedule = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    # With measurements: 8 TICKs = 9 moments (0-8), without: 7 TICKs = 8 moments (0-7)
+    schedule = [0, 1, 2, 3, 4, 5, 6, 7, 8] if (measure_aux or measure_shared_data) else [0, 1, 2, 3, 4, 5, 6, 7]
     scheduled_circuit = ScheduledCircuit.from_circuit(circuit, schedule, qubits.qubit_map)
     
     # Filter to keep only the used data qubits (2, 3) and syndrome qubit
@@ -314,9 +303,8 @@ def create_custom_coupling_plaquette_12(
         Step 2: CX(bottom-right, aux)      # data qubit is control!
         Step 3: CX(aux, bottom-left)
         Step 4: CX(aux, top-left)
-        Step 9: CX(aux, bottom-right)
-        Step 10: MX(aux) [optional]
-        Step 11: MZ(bottom-right) [optional]
+        Step 7: CX(aux, bottom-right)
+        Step 8: MX(aux), MZ(bottom-right)  # all measurements simultaneously
     
     Qubit layout (SquarePlaquetteQubits):
         - Index 0: top-left (-1, -1)
@@ -369,34 +357,24 @@ def create_custom_coupling_plaquette_12(
     circuit.append("CX", [AUX, TOP_LEFT], [])
     circuit.append("TICK", [], [])
     
-    # Steps 5, 6, 7, 8: (empty)
-    circuit.append("TICK", [], [])
-    circuit.append("TICK", [], [])
+    # Steps 5, 6: (empty)
     circuit.append("TICK", [], [])
     circuit.append("TICK", [], [])
     
-    # Step 9: CX between auxiliary (control) and bottom-right (target)
+    # Step 7: CX between auxiliary (control) and bottom-right (target) - moved from step 9
     circuit.append("CX", [AUX, BOTTOM_RIGHT], [])
     
-    # Step 10: Measure auxiliary in X basis (optional)
-    if measure_aux:
+    # Step 8: All measurements simultaneously (only add TICK if measurements follow)
+    if measure_aux or measure_shared_data:
         circuit.append("TICK", [], [])
-        circuit.append("MX", [AUX], [])
-    
-    # Step 11: Measure shared data qubit in Z basis (optional)
+        if measure_aux:
+            circuit.append("MX", [AUX], [])
     if measure_shared_data:
-        if not measure_aux:
-            circuit.append("TICK", [], [])  # Need TICK if we didn't have one for aux
-        circuit.append("TICK", [], [])
         circuit.append("MZ", [BOTTOM_RIGHT], [])
     
     # Create scheduled circuit with explicit schedule
-    if measure_shared_data:
-        schedule = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
-    elif measure_aux:
-        schedule = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-    else:
-        schedule = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    # With measurements: 8 TICKs = 9 moments (0-8), without: 7 TICKs = 8 moments (0-7)
+    schedule = [0, 1, 2, 3, 4, 5, 6, 7, 8] if (measure_aux or measure_shared_data) else [0, 1, 2, 3, 4, 5, 6, 7]
     scheduled_circuit = ScheduledCircuit.from_circuit(circuit, schedule, qubits.qubit_map)
     
     # Filter to keep only the used data qubits (0, 2, 3) and syndrome qubit
@@ -445,8 +423,8 @@ def create_custom_coupling_plaquette_xzx_7(
         Step 2: CX(bottom-left, aux)
         Step 5: CX(aux, top-right)
         Step 6: CX(aux, bottom-right)
-        Step 9: CX(aux, bottom-left)
-        Step 10: MX(aux) [optional]
+        Step 7: CX(aux, bottom-left)       # moved from step 9
+        Step 8: MX(aux)                    # all measurements simultaneously
     
     Qubit layout (SquarePlaquetteQubits):
         - Index 0: top-left (-1, -1)  -- NOT USED
@@ -502,20 +480,17 @@ def create_custom_coupling_plaquette_xzx_7(
     circuit.append("CX", [AUX, BOTTOM_RIGHT], [])
     circuit.append("TICK", [], [])
     
-    # Steps 7, 8: (empty)
-    circuit.append("TICK", [], [])
-    circuit.append("TICK", [], [])
-    
-    # Step 9: CX between auxiliary and bottom-left
+    # Step 7: CX between auxiliary and bottom-left (shared) - moved from step 9
     circuit.append("CX", [AUX, BOTTOM_LEFT], [])
     
-    # Step 10: Measure auxiliary in X basis (optional)
+    # Step 8: Measure auxiliary in X basis (optional, only add TICK if measurements follow)
     if measure_aux:
         circuit.append("TICK", [], [])
         circuit.append("MX", [AUX], [])
     
     # Create scheduled circuit with explicit schedule
-    schedule = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10] if measure_aux else [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    # With measurements: 8 TICKs = 9 moments (0-8), without: 7 TICKs = 8 moments (0-7)
+    schedule = [0, 1, 2, 3, 4, 5, 6, 7, 8] if measure_aux else [0, 1, 2, 3, 4, 5, 6, 7]
     scheduled_circuit = ScheduledCircuit.from_circuit(circuit, schedule, qubits.qubit_map)
     
     # Filter to keep only the used data qubits (1, 2, 3) and syndrome qubit
@@ -559,8 +534,8 @@ def create_custom_coupling_plaquette_xzx_8(
         Step 1: CX(aux, bottom-left)       # aux is control
         Step 2: CZ(aux, bottom-right)
         Step 3: CZ(aux, top-right)
-        Step 8: CX(bottom-left, aux)       # data qubit is control!
-        Step 9: MZ(aux) [optional]
+        Step 6: CX(bottom-left, aux)       # data qubit is control! (moved from step 8)
+        Step 8: MZ(aux)                    # all measurements simultaneously
     
     Qubit layout (SquarePlaquetteQubits):
         - Index 0: top-left (-1, -1)  -- NOT USED
@@ -609,22 +584,23 @@ def create_custom_coupling_plaquette_xzx_8(
     circuit.append("CZ", [AUX, TOP_RIGHT], [])
     circuit.append("TICK", [], [])
     
-    # Steps 4, 5, 6, 7: (empty)
-    circuit.append("TICK", [], [])
-    circuit.append("TICK", [], [])
+    # Steps 4, 5: (empty)
     circuit.append("TICK", [], [])
     circuit.append("TICK", [], [])
     
-    # Step 8: CX between bottom-left (control) and auxiliary (target)
+    # Step 6: CX between bottom-left (control) and auxiliary (target) - moved from step 8
     circuit.append("CX", [BOTTOM_LEFT, AUX], [])
+    circuit.append("TICK", [], [])
     
-    # Step 9: Measure auxiliary in Z basis (optional)
+    # Step 7: (empty - wait for other plaquettes, only needed if measurements follow)
+    # Step 8: Measure auxiliary in Z basis (optional) - all measurements simultaneously
     if measure_aux:
-        circuit.append("TICK", [], [])
+        circuit.append("TICK", [], [])  # Step 7 wait
         circuit.append("MZ", [AUX], [])
     
     # Create scheduled circuit with explicit schedule
-    schedule = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] if measure_aux else [0, 1, 2, 3, 4, 5, 6, 7, 8]
+    # With measurements: 8 TICKs = 9 moments (0-8), without: 7 TICKs = 8 moments (0-7)
+    schedule = [0, 1, 2, 3, 4, 5, 6, 7, 8] if measure_aux else [0, 1, 2, 3, 4, 5, 6, 7]
     scheduled_circuit = ScheduledCircuit.from_circuit(circuit, schedule, qubits.qubit_map)
     
     # Filter to keep only the used data qubits (1, 2, 3) and syndrome qubit
@@ -668,8 +644,8 @@ def create_custom_coupling_plaquette_xzx_1(
         Step 0: RX(aux), RZ(bottom-left)
         Step 1: CX(aux, bottom-left)       # aux is control
         Step 2: CZ(aux, bottom-right)
-        Step 8: CX(bottom-left, aux)       # data qubit is control!
-        Step 9: MZ(aux) [optional]
+        Step 6: CX(bottom-left, aux)       # data qubit is control! (moved from step 8)
+        Step 8: MZ(aux)                    # all measurements simultaneously
     
     Qubit layout (SquarePlaquetteQubits):
         - Index 0: top-left (-1, -1)  -- NOT USED
@@ -713,23 +689,24 @@ def create_custom_coupling_plaquette_xzx_1(
     circuit.append("CZ", [AUX, BOTTOM_RIGHT], [])
     circuit.append("TICK", [], [])
     
-    # Steps 3, 4, 5, 6, 7: (empty - no top-right gate)
-    circuit.append("TICK", [], [])
-    circuit.append("TICK", [], [])
+    # Steps 3, 4, 5: (empty - no top-right gate)
     circuit.append("TICK", [], [])
     circuit.append("TICK", [], [])
     circuit.append("TICK", [], [])
     
-    # Step 8: CX between bottom-left (control) and auxiliary (target)
+    # Step 6: CX between bottom-left (control) and auxiliary (target) - moved from step 8
     circuit.append("CX", [BOTTOM_LEFT, AUX], [])
+    circuit.append("TICK", [], [])
     
-    # Step 9: Measure auxiliary in Z basis (optional)
+    # Step 7: (empty - wait for other plaquettes, only needed if measurements follow)
+    # Step 8: Measure auxiliary in Z basis (optional) - all measurements simultaneously
     if measure_aux:
-        circuit.append("TICK", [], [])
+        circuit.append("TICK", [], [])  # Step 7 wait
         circuit.append("MZ", [AUX], [])
     
     # Create scheduled circuit with explicit schedule
-    schedule = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] if measure_aux else [0, 1, 2, 3, 4, 5, 6, 7, 8]
+    # With measurements: 8 TICKs = 9 moments (0-8), without: 7 TICKs = 8 moments (0-7)
+    schedule = [0, 1, 2, 3, 4, 5, 6, 7, 8] if measure_aux else [0, 1, 2, 3, 4, 5, 6, 7]
     scheduled_circuit = ScheduledCircuit.from_circuit(circuit, schedule, qubits.qubit_map)
     
     # Filter to keep only the used data qubits (2, 3) and syndrome qubit
@@ -1551,7 +1528,7 @@ def main():
     circuit = generate_two_cube_circuit_with_flag_detectors(
         k=k,
         noise_model=noise_model,
-        measure_shared_data_final_only=True,
+        measure_shared_data_final_only=False,
     )
     
     # Extract flag detector info from tags
