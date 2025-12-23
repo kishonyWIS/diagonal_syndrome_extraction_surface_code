@@ -2004,19 +2004,53 @@ def generate_two_cube_circuit(
     measure_shared_init_bulk = measure_shared_data and not measure_shared_data_final_only
     measure_shared_meas = measure_shared_data
     
-    # Reset shared data: always reset in init, optionally reset in bulk (if not final_only), never in meas
+    # Reset shared data: always reset in init, optionally reset in bulk/meas (if not final_only)
     reset_shared_init = True  # Always reset in init to initialize qubits
     reset_shared_bulk = not measure_shared_data_final_only  # Don't reset in bulk if final_only
-    reset_shared_meas = True  # Reset at start of meas round too (before CX interactions)
+    reset_shared_meas = not measure_shared_data_final_only  # Don't reset in meas if final_only
     
-    zxz_init = create_zxz_plaquettes(translator, reset="z", use_custom_coupling=True, measure_coupling_aux_mz=measure_coupling_aux_mz, measure_coupling_aux_mx=measure_coupling_aux_mx, measure_shared_data=measure_shared_init_bulk, reset_shared_data=reset_shared_init)
-    zxz_bulk = create_zxz_plaquettes(translator, use_custom_coupling=True, measure_coupling_aux_mz=measure_coupling_aux_mz, measure_coupling_aux_mx=measure_coupling_aux_mx, measure_shared_data=measure_shared_init_bulk, reset_shared_data=reset_shared_bulk)
-    zxz_meas = create_zxz_plaquettes(translator, measurement="z", use_custom_coupling=True, measure_coupling_aux_mz=measure_coupling_aux_mz, measure_coupling_aux_mx=measure_coupling_aux_mx, measure_shared_data=measure_shared_meas, reset_shared_data=reset_shared_meas)
+    zxz_init = create_zxz_plaquettes(
+        translator, reset="z", use_custom_coupling=True,
+        measure_coupling_aux_mz=measure_coupling_aux_mz,
+        measure_coupling_aux_mx=measure_coupling_aux_mx,
+        measure_shared_data=measure_shared_init_bulk,
+        reset_shared_data=reset_shared_init,
+    )
+    zxz_bulk = create_zxz_plaquettes(
+        translator, use_custom_coupling=True,
+        measure_coupling_aux_mz=measure_coupling_aux_mz,
+        measure_coupling_aux_mx=measure_coupling_aux_mx,
+        measure_shared_data=measure_shared_init_bulk,
+        reset_shared_data=reset_shared_bulk,
+    )
+    zxz_meas = create_zxz_plaquettes(
+        translator, measurement="z", use_custom_coupling=True,
+        measure_coupling_aux_mz=measure_coupling_aux_mz,
+        measure_coupling_aux_mx=measure_coupling_aux_mx,
+        measure_shared_data=measure_shared_meas,
+        reset_shared_data=reset_shared_meas,
+    )
     
     # Create plaquettes for XZX cube at (1, 0) - stores X
-    xzx_init = create_xzx_plaquettes(translator, reset="x", use_custom_coupling=True, measure_coupling_aux_mz=measure_coupling_aux_mz, measure_coupling_aux_mx=measure_coupling_aux_mx, reset_shared_data=reset_shared_init)
-    xzx_bulk = create_xzx_plaquettes(translator, use_custom_coupling=True, measure_coupling_aux_mz=measure_coupling_aux_mz, measure_coupling_aux_mx=measure_coupling_aux_mx, reset_shared_data=reset_shared_bulk)
-    xzx_meas = create_xzx_plaquettes(translator, measurement="x", use_custom_coupling=True, measure_coupling_aux_mz=measure_coupling_aux_mz, measure_coupling_aux_mx=measure_coupling_aux_mx, reset_shared_data=reset_shared_meas)
+    # Note: XZX plaquettes do NOT measure shared data (only ZXZ does)
+    xzx_init = create_xzx_plaquettes(
+        translator, reset="x", use_custom_coupling=True,
+        measure_coupling_aux_mz=measure_coupling_aux_mz,
+        measure_coupling_aux_mx=measure_coupling_aux_mx,
+        reset_shared_data=reset_shared_init,
+    )
+    xzx_bulk = create_xzx_plaquettes(
+        translator, use_custom_coupling=True,
+        measure_coupling_aux_mz=measure_coupling_aux_mz,
+        measure_coupling_aux_mx=measure_coupling_aux_mx,
+        reset_shared_data=reset_shared_bulk,
+    )
+    xzx_meas = create_xzx_plaquettes(
+        translator, measurement="x", use_custom_coupling=True,
+        measure_coupling_aux_mz=measure_coupling_aux_mz,
+        measure_coupling_aux_mx=measure_coupling_aux_mx,
+        reset_shared_data=reset_shared_meas,
+    )
     
     # Create cube plaquettes dict: position -> (init, bulk, meas)
     cube_plaquettes = {
@@ -2088,10 +2122,10 @@ def generate_two_cube_circuit_y_axis(
     measure_shared_init_bulk = measure_shared_data and not measure_shared_data_final_only
     measure_shared_meas = measure_shared_data
     
-    # Reset shared data: always reset in init, optionally reset in bulk (if not final_only), never in meas
+    # Reset shared data: always reset in init, optionally reset in bulk/meas (if not final_only)
     reset_shared_init = True  # Always reset in init to initialize qubits
     reset_shared_bulk = not measure_shared_data_final_only  # Don't reset in bulk if final_only
-    reset_shared_meas = True  # Reset at start of meas round too (before CX interactions)
+    reset_shared_meas = not measure_shared_data_final_only  # Don't reset in meas if final_only
     
     # Create plaquettes for XZZ cube at (0, 0) - stores Z, XZX-style boundaries
     xzz_init = create_xzz_plaquettes(
@@ -2173,25 +2207,10 @@ def generate_two_cube_circuit_y_axis_with_flag_detectors(
     measure_shared_data_final_only: bool = False,
 ) -> stim.Circuit:
     """
-    Generate a Y-axis two-cube circuit with proper detectors for flag measurements.
+    Generate a Y-axis two-cube circuit with proper flag detectors.
     
-    This uses a two-pass approach:
-    1. Generate circuit WITHOUT flags to get good automatic detectors
-    2. Generate circuit WITH flags but skip automatic detector computation
-    3. Map detectors from step 1 to step 2, and add simple single-measurement
-       detectors for each flag measurement (tagged with "flag")
-    
-    Flag measurements are Z-basis auxiliary qubit measurements:
-    - XZZ plaquette 13: MZ(aux) - FLAG
-    - ZXX plaquettes 1, 6: MZ(aux) - FLAGS
-    - Shared data qubit measurements (Z-basis)
-    
-    Non-flag coupling measurements are X-basis auxiliary qubit measurements:
-    - XZZ plaquettes 3, 14: MX(aux)
-    - ZXX plaquette 5: MX(aux)
-    
-    Flag detectors are tagged with "flag" and can be extracted using
-    get_flag_detector_indices_from_circuit().
+    This is a convenience wrapper around generate_spatial_hadamard_circuit(axis='y').
+    See that function for full documentation.
     
     Args:
         k: Scaling factor (code distance ≈ 2k+1)
@@ -2199,41 +2218,119 @@ def generate_two_cube_circuit_y_axis_with_flag_detectors(
         measure_shared_data_final_only: If True, only measure/reset shared data at first/last round
         
     Returns:
+        Complete stim circuit with flag detectors for the Y-axis spatial Hadamard
+    """
+    return generate_spatial_hadamard_circuit(
+        k=k,
+        axis='y',
+        noise_model=noise_model,
+        measure_shared_data_final_only=measure_shared_data_final_only,
+    )
+
+
+def generate_spatial_hadamard_circuit(
+    k: int = 2,
+    axis: str = 'x',
+    noise_model: NoiseModel | None = None,
+    measure_shared_data_final_only: bool = False,
+    flag_config: str | None = None,
+) -> stim.Circuit:
+    """
+    Generate a spatial Hadamard circuit with two cubes along the specified axis.
+    
+    This is the unified interface for generating spatial Hadamard circuits.
+    Uses a two-pass approach for proper flag detector handling.
+    
+    For X-axis (axis='x'):
+        - ZXZ cube at (0, 0, 0) stores Z
+        - XZX cube at (1, 0, 0) stores X
+        - Known parity plaquettes: (7, 11)
+    
+    For Y-axis (axis='y'):
+        - XZZ cube at (0, 0, 0) stores Z
+        - ZXX cube at (0, 1, 0) stores X
+        - Known parity plaquettes: (5, 13)
+    
+    Args:
+        k: Scaling factor (code distance ≈ 2k+1)
+        axis: 'x' or 'y' - direction of the two-cube layout
+        noise_model: Optional noise model to apply to the circuit
+        measure_shared_data_final_only: If True, only measure/reset shared data at first/last round
+            (deprecated, use flag_config instead)
+        flag_config: Flag measurement configuration:
+            - 'all': flags measured every round (measure_shared_data_final_only=False)
+            - 'partial': flags measured only in final round (measure_shared_data_final_only=True)
+            - 'none': no flags at all (measure_coupling_aux_mz=False, measure_shared_data=False)
+            - None: use measure_shared_data_final_only parameter for backwards compatibility
+        
+    Returns:
         Complete stim circuit with:
         - Core detectors mapped from the non-flag circuit
         - Tagged single-measurement detectors for each flag measurement
         - Properly mapped observable
     """
-    # Step 1: Generate circuit WITHOUT flags to get good detectors
-    # - No Z-basis aux measurements (these are the flags)
-    # - Yes X-basis aux measurements (these are not flags)
-    circuit_no_flags = generate_two_cube_circuit_y_axis(
+    # Handle flag_config parameter
+    # Determine whether to include MZ flags and shared data measurements
+    include_mz_flags = True  # Default: include MZ aux measurements (flags)
+    include_shared_data = True  # Default: include shared data measurements
+    
+    if flag_config is not None:
+        if flag_config == 'all':
+            measure_shared_data_final_only = False
+        elif flag_config == 'partial':
+            measure_shared_data_final_only = True
+        elif flag_config == 'none':
+            # No MZ flags or shared data measurements
+            measure_shared_data_final_only = False
+            include_mz_flags = False
+            include_shared_data = False
+        else:
+            raise ValueError(f"flag_config must be 'all', 'partial', or 'none', got '{flag_config}'")
+    
+    # Select the appropriate base circuit generator and parameters based on axis
+    if axis == 'x':
+        base_generator = generate_two_cube_circuit
+        known_parity_plaquettes = (7, 11)
+    elif axis == 'y':
+        base_generator = generate_two_cube_circuit_y_axis
+        known_parity_plaquettes = (5, 13)
+    else:
+        raise ValueError(f"axis must be 'x' or 'y', got '{axis}'")
+    
+    # Step 1: Generate circuit WITHOUT any stretched stabilizer measurements
+    circuit_no_flags = base_generator(
         k=k,
-        noise_model=None,  # No noise yet - apply at the end
-        measure_coupling_aux_mz=False,  # No flags: MZ aux not measured
-        measure_coupling_aux_mx=True,   # MX aux measured (not flags)
+        noise_model=None,
+        measure_coupling_aux_mz=False,
+        measure_coupling_aux_mx=False,
         measure_shared_data=False,
         measure_shared_data_final_only=measure_shared_data_final_only,
-        manhattan_radius=2,  # Normal detector computation
+        manhattan_radius=2,
     )
     
-    # Step 2: Generate circuit WITH flags, but skip automatic detectors
-    # - Yes Z-basis aux measurements (these are the flags)
-    # - Yes X-basis aux measurements (these are not flags)
-    circuit_with_flags = generate_two_cube_circuit_y_axis(
+    # Step 2: Generate circuit WITH stretched stabilizer measurements
+    # For 'none' config: no MZ flags or shared data, but still MX aux
+    circuit_with_flags = base_generator(
         k=k,
-        noise_model=None,  # No noise yet
-        measure_coupling_aux_mz=True,   # Flags: MZ aux measured
-        measure_coupling_aux_mx=True,   # MX aux measured (not flags)
-        measure_shared_data=True,
+        noise_model=None,
+        measure_coupling_aux_mz=include_mz_flags,
+        measure_coupling_aux_mx=True,
+        measure_shared_data=include_shared_data,
         measure_shared_data_final_only=measure_shared_data_final_only,
-        manhattan_radius=0,  # Disable automatic detector computation
+        manhattan_radius=0,
     )
     
-    # Step 3: Map detectors and add flag detectors (tagged with "flag")
+    # Step 3: Map detectors and add flag detectors
+    # Interface coordinates are the same formula for both axes
+    interface_min = 4 * k + 2
+    interface_max = 4 * k + 4
+    
     circuit_with_detectors = add_mapped_detectors_and_flag_detectors(
         circuit_with_flags,
         circuit_no_flags,
+        known_parity_plaquettes=known_parity_plaquettes,
+        interface_coord_range=(interface_min, interface_max),
+        interface_axis=axis,
         flag_detector_tag="flag",
     )
     
@@ -2340,24 +2437,280 @@ def _extract_detectors_from_circuit(circuit: stim.Circuit) -> list[tuple[list[in
     return detectors
 
 
+def _get_measurement_info(circuit: stim.Circuit) -> list[dict]:
+    """
+    Extract detailed measurement info from circuit.
+        
+    Returns:
+        List of dicts with keys: 'qubit', 'type', 'index', 'coords'
+        where coords is (x, y) from QUBIT_COORDS
+    """
+    # First pass: collect qubit coordinates
+    qubit_coords = {}
+    for inst in circuit.flattened():
+        if inst.name == 'QUBIT_COORDS':
+            args = inst.gate_args_copy()
+            targets = [t.value for t in inst.targets_copy() if t.is_qubit_target]
+            for t in targets:
+                qubit_coords[t] = (args[0], args[1])
+    
+    # Second pass: collect measurement info
+    measurements = []
+    meas_idx = 0
+    for inst in circuit.flattened():
+        if inst.name in ('M', 'MX', 'MY', 'MZ', 'MR', 'MRX', 'MRY', 'MRZ'):
+            for target in inst.targets_copy():
+                qubit = target.value
+                measurements.append({
+                    'qubit': qubit,
+                    'type': inst.name,
+                    'index': meas_idx,
+                    'coords': qubit_coords.get(qubit, (None, None)),
+                })
+                meas_idx += 1
+    
+    return measurements
+
+
+def _identify_known_parity_aux_qubits(
+    circuit: stim.Circuit,
+    known_parity_plaquettes: tuple[int, int],
+    interface_coord_range: tuple[float, float],
+    interface_axis: str,
+) -> set[int]:
+    """
+    Identify the MX aux qubits that belong to known parity stretched stabilizers.
+    
+    For known parity plaquettes (e.g., 7 and 11 for X-axis, 5 and 13 for Y-axis),
+    we need to find the MX aux qubits at the interface.
+    
+    The known parity stretched stabilizers are formed by pairs of plaquettes:
+    - X-axis: plaquettes 7 (XZX, MZ aux) + 11 (ZXZ, MX aux) at y=0 (Z-boundary)
+    - Y-axis: plaquettes 5 (ZXX, MX aux) + 13 (XZZ, MZ aux) at non-corner positions
+    
+    For Y-axis: The MX aux of plaquette 5 (ZXX) is at positions where plaquette 5 occurs,
+    i.e., at x = 2, 6, 10, ... (starting from 2, every 4 units). These are NOT at corners.
+    The interface y-coordinate for the MX aux is at the max of the interface range (in ZXX cube).
+    
+    For X-axis: The MX aux of plaquette 11 (ZXZ) is at y=0 (Z-boundary), interface x at min.
+    
+    Args:
+        circuit: The circuit to analyze
+        known_parity_plaquettes: Tuple of plaquette indices that have known parity
+        interface_coord_range: (min, max) coordinate range for the interface
+        interface_axis: 'x' or 'y' - which axis the interface is along
+        
+    Returns:
+        Set of qubit indices for the known parity MX aux qubits
+    """
+    # Get qubit coordinates
+    qubit_coords = {}
+    for inst in circuit.flattened():
+        if inst.name == 'QUBIT_COORDS':
+            args = inst.gate_args_copy()
+            targets = [t.value for t in inst.targets_copy() if t.is_qubit_target]
+            for t in targets:
+                qubit_coords[t] = (args[0], args[1])
+    
+    # Find MX measurements at the interface
+    meas_info = _get_measurement_info(circuit)
+    coord_min, coord_max = interface_coord_range
+    
+    # For stretched stabilizers, the MX aux is on one side of the interface
+    # and the MZ aux is on the other side.
+    # For Y-axis: MX aux (plaquette 5, ZXX) is at y = coord_max (top of interface)
+    # For X-axis: MX aux (plaquette 11, ZXZ) is at x = coord_min (left side of interface)
+    
+    if interface_axis == 'y':
+        # Y-axis interface: MX aux is at y = coord_max (ZXX cube side)
+        mx_interface_coord = coord_max
+    else:
+        # X-axis interface: MX aux is at x = coord_min (ZXZ cube side)
+        mx_interface_coord = coord_min
+    
+    # Find all MX aux at the interface on the correct side
+    mx_aux_at_interface = {}  # qubit -> perpendicular coordinate
+    for m in meas_info:
+        x, y = m['coords']
+        if x is None:
+            continue
+        coord = x if interface_axis == 'x' else y
+        perp_coord = y if interface_axis == 'x' else x
+        
+        # Check if this is an MX measurement at the correct interface position
+        if coord == mx_interface_coord and m['type'] == 'MX':
+            q = m['qubit']
+            if q not in mx_aux_at_interface:
+                mx_aux_at_interface[q] = perp_coord
+    
+    if not mx_aux_at_interface:
+        return set()
+    
+    # For known parity stretched stabilizers, we need to exclude corners
+    # Corners are at min and max of the perpendicular coordinate
+    perp_coords = set(mx_aux_at_interface.values())
+    perp_min = min(perp_coords)
+    perp_max = max(perp_coords)
+    
+    # Known parity MX aux are those NOT at corners
+    # (i.e., not at perp_min or perp_max which would be corners)
+    known_parity_aux = set()
+    for q, perp_coord in mx_aux_at_interface.items():
+        if perp_coord != perp_min and perp_coord != perp_max:
+            known_parity_aux.add(q)
+    
+    return known_parity_aux
+
+
+def _get_data_qubits_for_known_parity_stretched_stabilizer(
+    circuit: stim.Circuit,
+    mx_aux_qubit: int,
+    interface_coord_range: tuple[float, float],
+    interface_axis: str,
+) -> list[int]:
+    """
+    Find ALL data qubits for a known parity stretched stabilizer.
+    
+    This includes data qubits from BOTH the MX aux (e.g., plaquette 7) AND
+    its paired MZ aux (e.g., plaquette 11), but EXCLUDES the shared data qubit
+    at the interface.
+    
+    For X-axis (interface at x=10-12):
+    - MX aux at x=12, y=Y is paired with MZ aux at x=10, y=Y
+    - Returns 4 data qubits: 2 from each side, excluding shared at x=11
+    
+    For Y-axis (interface at y=4-6):
+    - MX aux at y=6, x=X is paired with MZ aux at y=4, x=X
+    - Returns 4 data qubits: 2 from each side, excluding shared at y=5
+    
+    Args:
+        circuit: The circuit to analyze
+        mx_aux_qubit: The MX aux qubit index (at coord_max side)
+        interface_coord_range: (min, max) coordinate range for the interface
+        interface_axis: 'x' or 'y' - which axis the interface is along
+        
+    Returns:
+        List of 4 data qubit indices (2 from each plaquette, excluding shared)
+    """
+    # Get qubit coordinates
+    qubit_coords = {}
+    for inst in circuit.flattened():
+        if inst.name == 'QUBIT_COORDS':
+            args = inst.gate_args_copy()
+            targets = [t.value for t in inst.targets_copy() if t.is_qubit_target]
+            for t in targets:
+                qubit_coords[t] = (args[0], args[1])
+    
+    coord_min, coord_max = interface_coord_range
+    
+    # Get MX aux coordinates
+    if mx_aux_qubit not in qubit_coords:
+        return []
+    mx_aux_x, mx_aux_y = qubit_coords[mx_aux_qubit]
+    
+    # Find the paired MZ aux (same perpendicular coordinate, but at coord_min)
+    # For X-axis: MX aux at (12, Y) pairs with MZ aux at (10, Y)
+    # For Y-axis: MX aux at (X, 6) pairs with MZ aux at (X, 4)
+    mz_aux_qubit = None
+    for q, (x, y) in qubit_coords.items():
+        if interface_axis == 'x':
+            # MZ aux should be at x=coord_min with same y
+            if x == coord_min and y == mx_aux_y:
+                mz_aux_qubit = q
+                break
+        else:  # y-axis
+            # MZ aux should be at y=coord_min with same x
+            if y == coord_min and x == mx_aux_x:
+                mz_aux_qubit = q
+                break
+    
+    # Find data qubits for both aux via CX/CZ interactions
+    all_data_qubits = set()
+    for inst in circuit.flattened():
+        if inst.name in ('CX', 'CZ'):
+            targets = [t.value for t in inst.targets_copy() if t.is_qubit_target]
+            for i in range(0, len(targets), 2):
+                if i + 1 < len(targets):
+                    ctrl, tgt = targets[i], targets[i+1]
+                    # Check if this involves our aux qubits
+                    if ctrl == mx_aux_qubit or tgt == mx_aux_qubit:
+                        other = tgt if ctrl == mx_aux_qubit else ctrl
+                        all_data_qubits.add(other)
+                    if mz_aux_qubit is not None and (ctrl == mz_aux_qubit or tgt == mz_aux_qubit):
+                        other = tgt if ctrl == mz_aux_qubit else ctrl
+                        all_data_qubits.add(other)
+    
+    # Remove the paired aux qubits themselves (they might interact with each other via shared data)
+    all_data_qubits.discard(mx_aux_qubit)
+    if mz_aux_qubit is not None:
+        all_data_qubits.discard(mz_aux_qubit)
+    
+    # Remove shared data qubits (those at the interface middle)
+    # For X-axis: shared data is at x=11 (between 10 and 12)
+    # For Y-axis: shared data is at y=5 (between 4 and 6)
+    non_shared = []
+    for dq in all_data_qubits:
+        if dq in qubit_coords:
+            x, y = qubit_coords[dq]
+            coord = x if interface_axis == 'x' else y
+            # Exclude qubits strictly within the interface range
+            if coord < coord_min or coord > coord_max:
+                non_shared.append(dq)
+    
+    return sorted(non_shared)
+
+
+def _get_final_data_measurement_indices(
+    meas_info: list[dict],
+    data_qubits: list[int],
+) -> list[int]:
+    """
+    Get the final measurement indices for specified data qubits.
+    
+    Returns:
+        List of measurement indices (the last measurement of each data qubit)
+    """
+    # Find the last measurement for each data qubit
+    last_meas = {}
+    for m in meas_info:
+        if m['qubit'] in data_qubits:
+            last_meas[m['qubit']] = m['index']
+    
+    return [last_meas[dq] for dq in data_qubits if dq in last_meas]
+
+
 def add_mapped_detectors_and_flag_detectors(
     circuit_with_flags: stim.Circuit,
     circuit_no_flags: stim.Circuit,
+    known_parity_plaquettes: tuple[int, int],
+    interface_coord_range: tuple[float, float],
+    interface_axis: str,
     flag_detector_tag: str = "flag",
 ) -> stim.Circuit:
     """
     Add detectors to the with-flag circuit based on the no-flag circuit detectors,
-    plus single-measurement detectors for each flag measurement.
+    plus manually constructed detectors for ALL stretched stabilizer measurements.
     
-    Flag detectors are tagged with the specified tag for easy identification.
+    The base circuit (no_flags) has NO stretched stabilizer measurements at all,
+    so automatic detector generation only covers regular plaquettes.
+    
+    Detector structure for stretched stabilizers (all added manually):
+    1. MZ measurements: single-measurement flag detectors (tagged)
+    2. MX consecutive pairs: MX(N) × MX(N+1) paired detectors
+    3. For known parity stretched stabilizers only:
+       - First MX: single-measurement detector
+       - Final MX × final data qubit measurements: detector
     
     Args:
-        circuit_with_flags: Circuit with flag measurements but no detectors (manhattan_radius=0)
-        circuit_no_flags: Circuit without flag measurements but with good detectors
+        circuit_with_flags: Circuit with ALL measurements but no detectors (manhattan_radius=0)
+        circuit_no_flags: Circuit WITHOUT stretched stabilizer measurements, with automatic detectors
+        known_parity_plaquettes: Tuple of plaquette indices that have known parity
+        interface_coord_range: (min, max) coordinate range for the interface
+        interface_axis: 'x' or 'y' - which axis the interface is along
         flag_detector_tag: Tag to apply to flag detectors (default: "flag")
         
     Returns:
-        New circuit with properly mapped detectors and tagged flag detectors.
+        New circuit with properly mapped detectors and stretched stabilizer detectors.
     """
     # Build the measurement mapping
     mapping, flag_indices = build_measurement_mapping(circuit_no_flags, circuit_with_flags)
@@ -2383,7 +2736,36 @@ def add_mapped_detectors_and_flag_detectors(
     # Get total measurements in with-flag circuit
     total_measurements_with_flags = circuit_with_flags.num_measurements
     
-    # Build the new circuit by stripping existing detectors/observables and adding new ones
+    # Get detailed measurement info for with-flag circuit
+    meas_info = _get_measurement_info(circuit_with_flags)
+    
+    # Identify known parity aux qubits
+    known_parity_aux = _identify_known_parity_aux_qubits(
+        circuit_with_flags, known_parity_plaquettes, interface_coord_range, interface_axis
+    )
+    
+    # ALL stretched stabilizer measurements are in flag_indices (since base has none)
+    # Separate them into MZ and MX measurements
+    coord_min, coord_max = interface_coord_range
+    mz_flag_indices = []  # MZ measurements (single-measurement flags)
+    mx_by_qubit = {}  # qubit -> list of measurement indices (for consecutive pairing)
+    
+    for flag_idx in flag_indices:
+        m = meas_info[flag_idx]
+        x, y = m['coords']
+        if x is None:
+            continue
+        coord = x if interface_axis == 'x' else y
+        if coord_min <= coord <= coord_max:
+            if m['type'] in ('M', 'MZ'):
+                mz_flag_indices.append(flag_idx)
+            elif m['type'] == 'MX':
+                q = m['qubit']
+                if q not in mx_by_qubit:
+                    mx_by_qubit[q] = []
+                mx_by_qubit[q].append(flag_idx)
+    
+    # Build the new circuit
     new_circuit = stim.Circuit()
     
     # Copy all instructions except DETECTOR and OBSERVABLE_INCLUDE
@@ -2391,38 +2773,66 @@ def add_mapped_detectors_and_flag_detectors(
         if inst.name not in ('DETECTOR', 'OBSERVABLE_INCLUDE'):
             new_circuit.append(inst)
     
-    # Add mapped detectors from no-flag circuit (these are the "core" detectors)
+    # 1. Add mapped detectors from no-flag circuit (these are the "core" detectors)
     for meas_offsets, coords in no_flag_detectors:
-        # Map measurement indices
         new_offsets = []
         for old_idx in meas_offsets:
             if old_idx in mapping:
                 new_offsets.append(mapping[old_idx])
             else:
-                # This shouldn't happen if our mapping is correct
                 raise ValueError(f"Measurement index {old_idx} not found in mapping")
         
-        # Convert to relative offsets from end of circuit
         relative_offsets = [idx - total_measurements_with_flags for idx in new_offsets]
-        
-        # Create detector instruction (no tag for core detectors)
         targets = [stim.target_rec(offset) for offset in relative_offsets]
         new_circuit.append("DETECTOR", targets, list(coords))
     
-    # Add single-measurement detectors for each flag measurement
-    # These are tagged with flag_detector_tag for easy identification
-    for flag_idx in sorted(flag_indices):
+    # 2. Add MZ flag detectors (single-measurement, tagged)
+    for flag_idx in sorted(mz_flag_indices):
+        m = meas_info[flag_idx]
+        x, y = m['coords']
         relative_offset = flag_idx - total_measurements_with_flags
-        # Create tagged detector instruction using stim.CircuitInstruction
         detector_inst = stim.CircuitInstruction(
             "DETECTOR",
             [stim.target_rec(relative_offset)],
-            [0.0, 0.0, 0.0],
+            [float(x), float(y), 0.0],
             tag=flag_detector_tag,
         )
         new_circuit.append(detector_inst)
     
-    # Add mapped observables
+    # 3. Add MX detectors for each aux qubit
+    # For stretched stabilizers, the automatic detector generation creates:
+    # - Initial single-measurement detector for MX aux on the "far" side of interface
+    # - Consecutive pairs for all MX aux
+    # The "far" side depends on interface axis: x=max for x-axis, y=max for y-axis
+    
+    # Determine which aux qubits should get initial single detectors
+    # These are aux at the "far" coordinate of the interface (opposite side from cube origin)
+    far_coord = coord_max  # e.g., x=12 for x-axis interface
+    
+    for qubit, indices in mx_by_qubit.items():
+        sorted_indices = sorted(indices)
+        m_first = meas_info[sorted_indices[0]]
+        x, y = m_first['coords']
+        qubit_coord = x if interface_axis == 'x' else y
+        
+        # Add initial single-measurement detector for aux at the far side of interface
+        if qubit_coord == far_coord and sorted_indices:
+            first_idx = sorted_indices[0]
+            rel_offset = first_idx - total_measurements_with_flags
+            new_circuit.append("DETECTOR", [stim.target_rec(rel_offset)], [float(x), float(y), 0.0])
+        
+        # Consecutive pairs: MX(N) × MX(N+1)
+        for i in range(len(sorted_indices) - 1):
+            idx1 = sorted_indices[i]
+            idx2 = sorted_indices[i + 1]
+            m = meas_info[idx2]
+            x, y = m['coords']
+            rel1 = idx1 - total_measurements_with_flags
+            rel2 = idx2 - total_measurements_with_flags
+            targets = [stim.target_rec(rel1), stim.target_rec(rel2)]
+            new_circuit.append("DETECTOR", targets, [float(x), float(y), 0.0])
+    
+    # 4. Add mapped observables
     for meas_offsets, obs_idx in observables:
         new_offsets = []
         for old_idx in meas_offsets:
@@ -2434,6 +2844,36 @@ def add_mapped_detectors_and_flag_detectors(
         relative_offsets = [idx - total_measurements_with_flags for idx in new_offsets]
         targets = [stim.target_rec(offset) for offset in relative_offsets]
         new_circuit.append("OBSERVABLE_INCLUDE", targets, [float(obs_idx)])
+    
+    # 5. Add final MX × data qubit detectors for known parity stretched stabilizers
+    # For known parity aux: final MX × final measurements of all 4 data qubits from both plaquettes
+    # (excluding the shared data qubit at the interface)
+    for qubit, indices in mx_by_qubit.items():
+        sorted_indices = sorted(indices)
+        m_first = meas_info[sorted_indices[0]]
+        x, y = m_first['coords']
+        qubit_coord = x if interface_axis == 'x' else y
+        
+        # Known parity aux are at the "far" side of interface (e.g., x=12 for x-axis)
+        if qubit_coord == coord_max and sorted_indices:
+            final_mx_idx = sorted_indices[-1]
+            m = meas_info[final_mx_idx]
+            x, y = m['coords']
+            
+            # Get data qubits from BOTH plaquettes (MX aux + paired MZ aux), excluding shared
+            data_qubits = _get_data_qubits_for_known_parity_stretched_stabilizer(
+                circuit_with_flags, qubit, interface_coord_range, interface_axis
+            )
+            
+            # Get final measurement indices for these data qubits
+            data_meas_indices = _get_final_data_measurement_indices(meas_info, data_qubits)
+            
+            if data_meas_indices:
+                # Build detector: final MX × final data measurements (should be 5 total: 1 aux + 4 data)
+                targets = [stim.target_rec(final_mx_idx - total_measurements_with_flags)]
+                for data_idx in data_meas_indices:
+                    targets.append(stim.target_rec(data_idx - total_measurements_with_flags))
+                new_circuit.append("DETECTOR", targets, [float(x), float(y), 0.0])
     
     return new_circuit
 
@@ -2473,25 +2913,10 @@ def generate_two_cube_circuit_with_flag_detectors(
     measure_shared_data_final_only: bool = False,
 ) -> stim.Circuit:
     """
-    Generate a two-cube circuit with proper detectors for flag measurements.
+    Generate an X-axis two-cube circuit with proper flag detectors.
     
-    This uses a two-pass approach:
-    1. Generate circuit WITHOUT flags to get good automatic detectors
-    2. Generate circuit WITH flags but skip automatic detector computation
-    3. Map detectors from step 1 to step 2, and add simple single-measurement
-       detectors for each flag measurement (tagged with "flag")
-    
-    Flag measurements are Z-basis auxiliary qubit measurements:
-    - ZXZ plaquette 11: MZ(aux) - FLAG
-    - XZX plaquettes 1, 8: MZ(aux) - FLAGS
-    - Shared data qubit measurements (Z-basis)
-    
-    Non-flag coupling measurements are X-basis auxiliary qubit measurements:
-    - ZXZ plaquettes 2, 12: MX(aux)
-    - XZX plaquette 7: MX(aux)
-    
-    Flag detectors are tagged with "flag" and can be extracted using
-    get_flag_detector_indices_from_circuit().
+    This is a convenience wrapper around generate_spatial_hadamard_circuit(axis='x').
+    See that function for full documentation.
     
     Args:
         k: Scaling factor (code distance ≈ 2k+1)
@@ -2499,49 +2924,14 @@ def generate_two_cube_circuit_with_flag_detectors(
         measure_shared_data_final_only: If True, only measure/reset shared data at first/last round
         
     Returns:
-        Complete stim circuit with:
-        - Core detectors mapped from the non-flag circuit
-        - Tagged single-measurement detectors for each flag measurement
-        - Properly mapped observable
+        Complete stim circuit with flag detectors for the X-axis spatial Hadamard
     """
-    # Step 1: Generate circuit WITHOUT flags to get good detectors
-    # - No Z-basis aux measurements (these are the flags)
-    # - Yes X-basis aux measurements (these are not flags)
-    circuit_no_flags = generate_two_cube_circuit(
+    return generate_spatial_hadamard_circuit(
         k=k,
-        noise_model=None,  # No noise yet - apply at the end
-        measure_coupling_aux_mz=False,  # No flags: MZ aux not measured
-        measure_coupling_aux_mx=True,   # MX aux measured (not flags)
-        measure_shared_data=False,
+        axis='x',
+        noise_model=noise_model,
         measure_shared_data_final_only=measure_shared_data_final_only,
-        manhattan_radius=2,  # Normal detector computation
     )
-    
-    # Step 2: Generate circuit WITH flags, but skip automatic detectors
-    # - Yes Z-basis aux measurements (these are the flags)
-    # - Yes X-basis aux measurements (these are not flags)
-    circuit_with_flags = generate_two_cube_circuit(
-        k=k,
-        noise_model=None,  # No noise yet
-        measure_coupling_aux_mz=True,   # Flags: MZ aux measured
-        measure_coupling_aux_mx=True,   # MX aux measured (not flags)
-        measure_shared_data=True,
-        measure_shared_data_final_only=measure_shared_data_final_only,
-        manhattan_radius=0,  # Disable automatic detector computation
-    )
-    
-    # Step 3: Map detectors and add flag detectors (tagged with "flag")
-    circuit_with_detectors = add_mapped_detectors_and_flag_detectors(
-        circuit_with_flags,
-        circuit_no_flags,
-        flag_detector_tag="flag",
-    )
-    
-    # Step 4: Apply noise if provided
-    if noise_model is not None:
-        circuit_with_detectors = noise_model.noisy_circuit(circuit_with_detectors)
-    
-    return circuit_with_detectors
 
 
 def calculate_graphlike_distance(circuit: stim.Circuit) -> int | None:
@@ -2579,126 +2969,76 @@ def save_circuit_to_file(
     print(f"Circuit saved to: {filepath}")
 
 
-def load_circuit_from_file(filepath: str) -> stim.Circuit:
-    """Load a stim circuit from a file."""
-    with open(filepath, 'r') as f:
-        return stim.Circuit(f.read())
-
-
 def main():
     """Generate and analyze two-cube spatial Hadamard circuits (X-axis and Y-axis)."""
     k = 2
     noise_level = 0.001
-    
     noise_model = NoiseModel.uniform_depolarizing(noise_level)
     
-    # ========================================================================
-    # X-AXIS SPATIAL HADAMARD (ZXZ + XZX along x-axis)
-    # ========================================================================
-    print("=" * 70)
-    print("Spatial Hadamard: X-Axis (ZXZ + XZX)")
-    print("=" * 70)
-    print(f"k = {k} (code distance ≈ {2*k+1})")
-    print(f"Noise level: {noise_level}")
-    print()
+    # Configuration for each axis
+    axis_configs = {
+        'x': {'name': 'X-Axis', 'cubes': 'ZXZ + XZX', 'filename': 'spatial_hadamard_x_axis.stim'},
+        'y': {'name': 'Y-Axis', 'cubes': 'XZZ + ZXX', 'filename': 'spatial_hadamard_y_axis.stim'},
+    }
     
-    # Generate two-cube circuit with proper flag detectors (two-pass approach)
-    print("Generating X-axis two-cube circuit with flag detectors...")
-    circuit_x = generate_two_cube_circuit_with_flag_detectors(
-        k=k,
-        noise_model=noise_model,
-        measure_shared_data_final_only=False,
-    )
+    circuits = {}
     
-    # Extract flag detector info from tags
-    flag_detector_indices = get_flag_detector_indices_from_circuit(circuit_x)
-    print(f"Flag detectors: {len(flag_detector_indices)} (tagged with 'flag')")
+    for axis, config in axis_configs.items():
+        print("=" * 70)
+        print(f"Spatial Hadamard: {config['name']} ({config['cubes']})")
+        print("=" * 70)
+        print(f"k = {k} (code distance ≈ {2*k+1})")
+        print(f"Noise level: {noise_level}")
+        print()
+        
+        # Generate circuit with flag detectors
+        print(f"Generating {config['name']} two-cube circuit with flag detectors...")
+        circuit = generate_spatial_hadamard_circuit(
+            k=k,
+            axis=axis,
+            noise_model=noise_model,
+            measure_shared_data_final_only=False,
+        )
+        circuits[axis] = circuit
+        
+        # Extract flag detector info
+        flag_indices = get_flag_detector_indices_from_circuit(circuit)
+        print(f"Flag detectors: {len(flag_indices)} (tagged with 'flag')")
+        
+        # Verify no missing detectors
+        missing = circuit.missing_detectors()
+        if missing.num_detectors > 0:
+            print(f"WARNING: {missing.num_detectors} missing detectors found!")
+        else:
+            print("All measurements covered by detectors ✓")
+        
+        print()
+        print("Circuit Statistics:")
+        print(f"  Instructions: {len(circuit)}")
+        print(f"  Qubits: {circuit.num_qubits}")
+        print(f"  Detectors: {circuit.num_detectors}")
+        print(f"  Observables: {circuit.num_observables}")
+        print(f"  Measurements: {circuit.num_measurements}")
+        
+        print()
+        print("Distance Calculations:")
+        graphlike_dist = calculate_graphlike_distance(circuit)
+        print(f"  Graph-like distance: {graphlike_dist}")
+        circuit_dist = calculate_circuit_distance(circuit)
+        print(f"  Circuit distance: {circuit_dist}")
+        
+        # Save circuit
+        save_circuit_to_file(circuit, config['filename'])
+        print()
     
-    # Verify no missing detectors
-    missing_detectors = circuit_x.missing_detectors()
-    if missing_detectors.num_detectors > 0:
-        print(f"WARNING: {missing_detectors.num_detectors} missing detectors found!")
-    else:
-        print("All measurements covered by detectors ✓")
-    
-    print()
-    print("Circuit Statistics:")
-    print(f"  Instructions: {len(circuit_x)}")
-    print(f"  Qubits: {circuit_x.num_qubits}")
-    print(f"  Detectors: {circuit_x.num_detectors}")
-    print(f"  Observables: {circuit_x.num_observables}")
-    print(f"  Measurements: {circuit_x.num_measurements}")
-    
-    print()
-    print("Distance Calculations:")
-    graphlike_dist = calculate_graphlike_distance(circuit_x)
-    print(f"  Graph-like distance: {graphlike_dist}")
-    circuit_dist = calculate_circuit_distance(circuit_x)
-    print(f"  Circuit distance: {circuit_dist}")
-    
-    # Save X-axis circuit
-    save_circuit_to_file(circuit_x, "spatial_hadamard_x_axis.stim")
-    
-    # ========================================================================
-    # Y-AXIS SPATIAL HADAMARD (XZZ + ZXX along y-axis)
-    # ========================================================================
-    print()
-    print("=" * 70)
-    print("Spatial Hadamard: Y-Axis (XZZ + ZXX)")
-    print("=" * 70)
-    print(f"k = {k} (code distance ≈ {2*k+1})")
-    print(f"Noise level: {noise_level}")
-    print()
-    
-    # Generate Y-axis two-cube circuit with proper flag detectors (two-pass approach)
-    print("Generating Y-axis two-cube circuit with flag detectors...")
-    circuit_y = generate_two_cube_circuit_y_axis_with_flag_detectors(
-        k=k,
-        noise_model=noise_model,
-        measure_shared_data_final_only=False,
-    )
-    
-    # Extract flag detector info from tags
-    flag_detector_indices_y = get_flag_detector_indices_from_circuit(circuit_y)
-    print(f"Flag detectors: {len(flag_detector_indices_y)} (tagged with 'flag')")
-    
-    # Verify no missing detectors
-    missing_detectors = circuit_y.missing_detectors()
-    if missing_detectors.num_detectors > 0:
-        print(f"WARNING: {missing_detectors.num_detectors} missing detectors found!")
-    else:
-        print("All measurements covered by detectors ✓")
-    
-    print()
-    print("Circuit Statistics:")
-    print(f"  Instructions: {len(circuit_y)}")
-    print(f"  Qubits: {circuit_y.num_qubits}")
-    print(f"  Detectors: {circuit_y.num_detectors}")
-    print(f"  Observables: {circuit_y.num_observables}")
-    print(f"  Measurements: {circuit_y.num_measurements}")
-    
-    print()
-    print("Distance Calculations:")
-    graphlike_dist_y = calculate_graphlike_distance(circuit_y)
-    print(f"  Graph-like distance: {graphlike_dist_y}")
-    circuit_dist_y = calculate_circuit_distance(circuit_y)
-    print(f"  Circuit distance: {circuit_dist_y}")
-    
-    # Save Y-axis circuit
-    save_circuit_to_file(circuit_y, "spatial_hadamard_y_axis.stim")
-    
-    # ========================================================================
-    # CRUMBLE URLS
-    # ========================================================================
-    print()
+    # Print Crumble URLs
     print("=" * 70)
     print("Crumble URLs")
     print("=" * 70)
-    print("X-axis circuit:")
-    print(shift_to_only_positive(circuit_x).to_crumble_url())
-    print()
-    print("Y-axis circuit:")
-    print(shift_to_only_positive(circuit_y).to_crumble_url())
+    for axis, config in axis_configs.items():
+        print(f"{config['name']} circuit:")
+        print(shift_to_only_positive(circuits[axis]).to_crumble_url())
+        print()
 
 
 if __name__ == "__main__":
