@@ -649,6 +649,10 @@ def main():
                        help='Skip logical error rate calculation and plotting')
     parser.add_argument('--skip-crumble', action='store_true',
                        help='Skip Crumble URL generation')
+    parser.add_argument('--load-distances', type=str, default=None,
+                       help='Load distances from CSV file instead of recomputing')
+    parser.add_argument('--load-error-rates', type=str, default=None,
+                       help='Load error rates from CSV file instead of recomputing')
     
     args = parser.parse_args()
     
@@ -671,6 +675,8 @@ def main():
     print(f"Skip distance calculation: {args.skip_distance}")
     print(f"Skip logical error calculation: {args.skip_logical_error}")
     print(f"Skip Crumble URLs: {args.skip_crumble}")
+    print(f"Load distances from: {args.load_distances}")
+    print(f"Load error rates from: {args.load_error_rates}")
     print()
     
     # Show plaquette configurations
@@ -686,6 +692,28 @@ def main():
     all_results = {}
     all_distances = {}
     all_crumble_urls = {}
+    
+    # Load distances from CSV if provided
+    if args.load_distances:
+        print(f"=== Loading Distances from {args.load_distances} ===")
+        try:
+            all_distances = load_distances_from_csv(args.load_distances)
+            print()
+        except FileNotFoundError:
+            print(f"Warning: File {args.load_distances} not found. Will compute distances.")
+            args.load_distances = None
+            print()
+    
+    # Load error rates from CSV if provided
+    if args.load_error_rates:
+        print(f"=== Loading Error Rates from {args.load_error_rates} ===")
+        try:
+            all_results = load_error_rates_from_csv(args.load_error_rates)
+            print()
+        except FileNotFoundError:
+            print(f"Warning: File {args.load_error_rates} not found. Will compute error rates.")
+            args.load_error_rates = None
+            print()
     
     # Test each k value
     for k in k_values:
@@ -720,8 +748,14 @@ def main():
             all_crumble_urls[k] = k_urls
             print()
         
-        # Calculate logical error rates (optional)
-        if not args.skip_logical_error and PYMATCHING_AVAILABLE:
+        # Calculate logical error rates (optional, skip if loaded from CSV)
+        if args.load_error_rates:
+            if k in all_results:
+                print(f"Using loaded error rates for k={k}")
+            else:
+                print(f"Warning: No loaded error rates for k={k}")
+            print()
+        elif not args.skip_logical_error and PYMATCHING_AVAILABLE:
             print(f"Calculating logical error rates for k={k}...")
             k_results = {}
             
@@ -739,8 +773,14 @@ def main():
             print(f"Skipping logical error rate calculation for k={k} (pymatching not available)")
             print()
         
-        # Calculate distances (optional)
-        if not args.skip_distance:
+        # Calculate distances (optional, skip if loaded from CSV)
+        if args.load_distances:
+            if k in all_distances:
+                print(f"Using loaded distances for k={k}")
+            else:
+                print(f"Warning: No loaded distances for k={k}")
+            print()
+        elif not args.skip_distance:
             print(f"Calculating circuit distances for k={k}...")
             k_distances = {}
             
@@ -769,9 +809,10 @@ def main():
             print()
     
     # Save data to CSV and create plots
-    if not args.skip_distance and all_distances:
-        print("=== Saving Distance Data ===")
-        save_distances_to_csv(all_distances)
+    if all_distances:
+        if not args.load_distances:
+            print("=== Saving Distance Data ===")
+            save_distances_to_csv(all_distances)
         print("=== Creating Distance vs k Plot ===")
         plot_distance_vs_k(all_distances)
         print()
@@ -779,9 +820,10 @@ def main():
         print("Skipping distance calculation")
         print()
     
-    if not args.skip_logical_error and PYMATCHING_AVAILABLE and all_results:
-        print("=== Saving Error Rate Data ===")
-        save_error_rates_to_csv(all_results)
+    if all_results:
+        if not args.load_error_rates:
+            print("=== Saving Error Rate Data ===")
+            save_error_rates_to_csv(all_results)
         print("=== Creating Logical Error Rate Plot ===")
         plot_logical_error_rates_multi_k(all_results)
         print()
@@ -795,8 +837,8 @@ def main():
     # Print summary
     print("=== Summary ===")
     
-    # Distance summary (optional)
-    if not args.skip_distance and all_distances:
+    # Distance summary (if available)
+    if all_distances:
         print("Circuit Distances:")
         for k in k_values:
             distance = 2 * k + 1
