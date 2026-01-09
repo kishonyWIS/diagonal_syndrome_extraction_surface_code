@@ -461,6 +461,7 @@ def plot_logical_error_rates_multi_k(results_data, save_path="benchmark_plots/me
             x_func=lambda s: s.json_metadata['p'],
             group_func=lambda s: f"k={s.json_metadata['k']} (d={s.json_metadata['d']})",
         )
+    ax1.loglog()
     ax1.set_title("Original Circuit (Standard Schedule)", fontsize=14)
     ax1.set_xlabel("Physical Error Rate", fontsize=12)
     ax1.set_ylabel("Logical Error Rate per Shot", fontsize=12)
@@ -477,6 +478,7 @@ def plot_logical_error_rates_multi_k(results_data, save_path="benchmark_plots/me
             x_func=lambda s: s.json_metadata['p'],
             group_func=lambda s: f"k={s.json_metadata['k']} (d={s.json_metadata['d']})",
         )
+    ax2.loglog()
     ax2.set_title("Diagonal Circuit (Diagonal Schedule)", fontsize=14)
     ax2.set_xlabel("Physical Error Rate", fontsize=12)
     ax2.set_ylabel("Logical Error Rate per Shot", fontsize=12)
@@ -508,6 +510,7 @@ def plot_logical_error_rates_multi_k(results_data, save_path="benchmark_plots/me
         group_func=lambda s: f"{s.json_metadata['circuit'].replace(' Circuit', '')} k={s.json_metadata['k']}",
     )
     
+    ax.loglog()
     ax.set_title("Surface Code Memory: Original vs Diagonal Schedule", fontsize=14)
     ax.set_xlabel("Physical Error Rate", fontsize=12)
     ax.set_ylabel("Logical Error Rate per Shot", fontsize=12)
