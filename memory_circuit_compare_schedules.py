@@ -346,10 +346,10 @@ def main():
     # Show plaquette configurations
     print("=== Plaquette Configurations ===")
     print("Standard X-basis bulk: \"-x1- -x2- -x3- -x5-\" (schedule: [1,2,3,5])")
-    print("Diagonal X-basis bulk: \"-x1- -x4- -x3- -x2-\" (schedule: [1,4,3,2])")
+    print("Diagonal X-basis bulk: \"-x7- -x5- -x4- -x6-\" (schedule: [7,5,4,6])")
     print()
     print("Standard Z-basis bulk: \"-z1- -z2- -z3- -z5-\" (schedule: [1,2,3,5])")
-    print("Diagonal Z-basis bulk: \"-z6- -z4- -z3- -z5-\" (schedule: [6,4,3,5])")
+    print("Diagonal Z-basis bulk: \"-z1- -z3- -z4- -z2-\" (schedule: [1,3,4,2])")
     print()
     
     # Store results for all k values and circuit types

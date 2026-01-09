@@ -22,13 +22,13 @@ class DiagonalPlaquetteGenerator(FixedBulkConventionGenerator):
         if translator is None:
             translator = DefaultRPNGTranslator()
         if compiler is None:
-            # Create custom Identity compiler that handles schedule 7 but keeps original basis
+            # Create custom Identity compiler that handles schedule values up to 8
             compiler = PlaquetteCompiler(
                 "CustomIdentity",
                 [
-                    # Compact schedule map: {0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6, 7: 7}
+                    # Compact schedule map: {0: 0, 1: 1, ..., 8: 8}
                     # No gaps - direct mapping to avoid idle moments
-                    ChangeSchedulePass({i: i for i in range(8)}),
+                    ChangeSchedulePass({i: i for i in range(9)}),
                     SortTargetsPass(),
                 ],
                 mergeable_instructions_modifier=lambda x: x | frozenset(["H"]),
@@ -59,24 +59,24 @@ class DiagonalPlaquetteGenerator(FixedBulkConventionGenerator):
         rs = [_r if i in reset_and_measured_indices else "-" for i in range(4)]
         ms = [_m if i in reset_and_measured_indices else "-" for i in range(4)]
         
-        # Use the original diagonal schedules with qubit index 6
-        # Original: X-vertical=(1,4,3,5), X-horizontal=(1,2,3,5), Z-vertical=(1,4,3,5), Z-horizontal=(1,2,3,5)
-        # Diagonal: X-vertical=(1,4,3,2), X-horizontal=(1,4,3,2), Z-vertical=(6,4,3,5), Z-horizontal=(6,4,3,5)
+        # Diagonal schedules (matching spatial_hadamard_manual_construction.py)
+        # X-basis: [7, 5, 4, 6]
+        # Z-basis: [1, 3, 4, 2]
         return {
             Basis.X: {
                 Orientation.VERTICAL: RPNGDescription.from_string(
-                    " ".join(f"{r}x{s}{m}" for r, s, m in zip(rs, [1, 4, 3, 2], ms))
+                    " ".join(f"{r}x{s}{m}" for r, s, m in zip(rs, [7, 5, 4, 6], ms))
                 ),
                 Orientation.HORIZONTAL: RPNGDescription.from_string(
-                    " ".join(f"{r}x{s}{m}" for r, s, m in zip(rs, [1, 4, 3, 2], ms))
+                    " ".join(f"{r}x{s}{m}" for r, s, m in zip(rs, [7, 5, 4, 6], ms))
                 ),
             },
             Basis.Z: {
                 Orientation.VERTICAL: RPNGDescription.from_string(
-                    " ".join(f"{r}z{s}{m}" for r, s, m in zip(rs, [6, 4, 3, 5], ms))
+                    " ".join(f"{r}z{s}{m}" for r, s, m in zip(rs, [1, 3, 4, 2], ms))
                 ),
                 Orientation.HORIZONTAL: RPNGDescription.from_string(
-                    " ".join(f"{r}z{s}{m}" for r, s, m in zip(rs, [6, 4, 3, 5], ms))
+                    " ".join(f"{r}z{s}{m}" for r, s, m in zip(rs, [1, 3, 4, 2], ms))
                 ),
             },
         }
@@ -90,18 +90,18 @@ class DiagonalPlaquetteGenerator(FixedBulkConventionGenerator):
         """
         return {
             Basis.X: {
-                # Derived from "-x1- -x4- -x3- -x2-"
-                PlaquetteOrientation.DOWN: RPNGDescription.from_string("-x1- -x4- ---- ----"),
-                PlaquetteOrientation.LEFT: RPNGDescription.from_string("---- -x4- ---- -x2-"),
-                PlaquetteOrientation.UP: RPNGDescription.from_string("---- ---- -x3- -x2-"),
-                PlaquetteOrientation.RIGHT: RPNGDescription.from_string("-x1- ---- -x3- ----"),
+                # Derived from "-x7- -x5- -x4- -x6-" (schedule [7,5,4,6])
+                PlaquetteOrientation.DOWN: RPNGDescription.from_string("-x7- -x5- ---- ----"),
+                PlaquetteOrientation.LEFT: RPNGDescription.from_string("---- -x5- ---- -x6-"),
+                PlaquetteOrientation.UP: RPNGDescription.from_string("---- ---- -x4- -x6-"),
+                PlaquetteOrientation.RIGHT: RPNGDescription.from_string("-x7- ---- -x4- ----"),
             },
             Basis.Z: {
-                # Derived from "-z6- -z4- -z3- -z5-" (back to original with z6)
-                PlaquetteOrientation.DOWN: RPNGDescription.from_string("-z6- -z4- ---- ----"),
-                PlaquetteOrientation.LEFT: RPNGDescription.from_string("---- -z4- ---- -z5-"),
-                PlaquetteOrientation.UP: RPNGDescription.from_string("---- ---- -z3- -z5-"),
-                PlaquetteOrientation.RIGHT: RPNGDescription.from_string("-z6- ---- -z3- ----"),
+                # Derived from "-z1- -z3- -z4- -z2-" (schedule [1,3,4,2])
+                PlaquetteOrientation.DOWN: RPNGDescription.from_string("-z1- -z3- ---- ----"),
+                PlaquetteOrientation.LEFT: RPNGDescription.from_string("---- -z3- ---- -z2-"),
+                PlaquetteOrientation.UP: RPNGDescription.from_string("---- ---- -z4- -z2-"),
+                PlaquetteOrientation.RIGHT: RPNGDescription.from_string("-z1- ---- -z4- ----"),
             },
         }
     
@@ -160,30 +160,24 @@ class DiagonalPlaquetteGenerator(FixedBulkConventionGenerator):
         These correspond to corner plaquettes where two adjacent arms are missing.
         Each connects to 3 data qubits (omitting one qubit, indicated by ----).
         
-        The original standard 3-body plaquettes are:
-        - Top-left Z: "---- -z4- -z3- -z5-" 
-        - Top-right X: "-x1- ---- -x3- -x5-"
-        - Bottom-left X: "-x1- -x2- ---- -x5-"
-        - Bottom-right Z: "-z1- -z4- -z3- ----"
+        Diagonal schedules (matching spatial_hadamard_manual_construction.py):
+        - X-basis: [7, 5, 4, 6] for positions [0, 1, 2, 3]
+        - Z-basis: [1, 3, 4, 2] for positions [0, 1, 2, 3]
         
-        For diagonal schedule:
-        - Z plaquettes use schedule [6,4,3,5] instead of [1,4,3,5]
-        - X plaquettes use schedule [1,4,3,2] instead of [1,2,3,5]
-        - Keep the same qubit omissions (----)
+        3-body plaquettes omit one position:
+        - Top-left Z: omit position 0 -> "---- -z3- -z4- -z2-"
+        - Top-right X: omit position 1 -> "-x7- ---- -x4- -x6-"
+        - Bottom-left X: omit position 2 -> "-x7- -x5- ---- -x6-"
+        - Bottom-right Z: omit position 3 -> "-z1- -z3- -z4- ----"
         """
         r = reset.value.lower() if reset is not None else "-"
         m = measurement.value.lower() if measurement is not None else "-"
         
-        # Diagonal 3-body plaquettes - same structure but with diagonal schedules
-        # Top-left Z: "---- -z4- -z3- -z5-" -> "---- -z4- -z3- -z5-" (same, no z1 in original)
-        # Top-right X: "-x1- ---- -x3- -x5-" -> "-x1- ---- -x3- -x2-" (x5 -> x2)
-        # Bottom-left X: "-x1- -x2- ---- -x5-" -> "-x1- -x4- ---- -x2-" (x2->x4, x5->x2)
-        # Bottom-right Z: "-z1- -z4- -z3- ----" -> "-z6- -z4- -z3- ----" (z1 -> z6)
         return (
-            RPNGDescription.from_string(f"---- {r}z4{m} {r}z3{m} {r}z5{m}"),  # Top-left Z
-            RPNGDescription.from_string(f"{r}x1{m} ---- {r}x3{m} {r}x2{m}"),  # Top-right X
-            RPNGDescription.from_string(f"{r}x1{m} {r}x4{m} ---- {r}x2{m}"),  # Bottom-left X
-            RPNGDescription.from_string(f"{r}z6{m} {r}z4{m} {r}z3{m} ----"),  # Bottom-right Z
+            RPNGDescription.from_string(f"---- {r}z3{m} {r}z4{m} {r}z2{m}"),  # Top-left Z (omit pos 0)
+            RPNGDescription.from_string(f"{r}x7{m} ---- {r}x4{m} {r}x6{m}"),  # Top-right X (omit pos 1)
+            RPNGDescription.from_string(f"{r}x7{m} {r}x5{m} ---- {r}x6{m}"),  # Bottom-left X (omit pos 2)
+            RPNGDescription.from_string(f"{r}z1{m} {r}z3{m} {r}z4{m} ----"),  # Bottom-right Z (omit pos 3)
         )
 
     def get_spatial_cube_qubit_rpng_descriptions(
@@ -528,14 +522,14 @@ def demonstrate_diagonal_plaquettes():
     print("=== Comparison with Original ===")
     print()
     print("Original X-basis bulk: \"-x1- -x2- -x3- -x5-\"")
-    print("New diagonal X-basis: \"-x1- -x4- -x3- -x2-\"")
+    print("New diagonal X-basis: \"-x7- -x5- -x4- -x6-\"")
     print()
     print("Original Z-basis bulk: \"-z1- -z2- -z3- -z5-\"")
-    print("New diagonal Z-basis: \"-z6- -z4- -z3- -z5-\"")
+    print("New diagonal Z-basis: \"-z1- -z3- -z4- -z2-\"")
     print()
     print("Key differences:")
-    print("- X-basis: Changed schedule from [1,2,3,5] to [1,4,3,2]")
-    print("- Z-basis: Changed schedule from [1,2,3,5] to [6,4,3,5]")
+    print("- X-basis: Changed schedule from [1,2,3,5] to [7,5,4,6]")
+    print("- Z-basis: Changed schedule from [1,2,3,5] to [1,3,4,2]")
 
 if __name__ == "__main__":
     demonstrate_diagonal_plaquettes()

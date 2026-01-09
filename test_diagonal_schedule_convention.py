@@ -7,7 +7,7 @@ if __name__ == "__main__":
 
     # Modify MEASUREMENT_SCHEDULE BEFORE importing any tqec modules
     import tqec.plaquette.constants as constants
-    constants.MEASUREMENT_SCHEDULE = 7  # Allow schedule index 6
+    constants.MEASUREMENT_SCHEDULE = 8  # Allow schedule values up to 7
 
     # Reload the translator module to pick up the new MEASUREMENT_SCHEDULE
     import importlib
