@@ -449,17 +449,31 @@ def plot_logical_error_rates_multi_k(results_data, save_path="benchmark_plots/me
         print("No data to plot")
         return
     
+    # Define markers for different k values
+    k_markers = {1: 'o', 2: 's', 3: '^', 4: 'D', 5: 'v'}
+    
+    # Group function that returns styling dict for sinter
+    def group_func_with_style(s, color, linestyle):
+        k = s.json_metadata['k']
+        d = s.json_metadata['d']
+        return {
+            'label': f"k={k} (d={d})",
+            'marker': k_markers.get(k, 'o'),
+            'color': color,
+            'linestyle': linestyle,
+        }
+    
     # Create figure with two subplots side by side
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7))
     
-    # Plot Original Circuit
+    # Plot Original Circuit (dashed blue)
     original_stats = [s for s in stats_list if s.json_metadata['circuit'] == 'Original Circuit']
     if original_stats:
         sinter.plot_error_rate(
             ax=ax1,
             stats=original_stats,
             x_func=lambda s: s.json_metadata['p'],
-            group_func=lambda s: f"k={s.json_metadata['k']} (d={s.json_metadata['d']})",
+            group_func=lambda s: group_func_with_style(s, 'blue', '--'),
         )
     ax1.loglog()
     ax1.set_title("Original Circuit (Standard Schedule)", fontsize=14)
@@ -469,14 +483,14 @@ def plot_logical_error_rates_multi_k(results_data, save_path="benchmark_plots/me
     ax1.grid(which='minor', alpha=0.2)
     ax1.legend(fontsize=10)
     
-    # Plot Diagonal Circuit
+    # Plot Diagonal Circuit (solid green)
     diagonal_stats = [s for s in stats_list if s.json_metadata['circuit'] == 'Diagonal Circuit']
     if diagonal_stats:
         sinter.plot_error_rate(
             ax=ax2,
             stats=diagonal_stats,
             x_func=lambda s: s.json_metadata['p'],
-            group_func=lambda s: f"k={s.json_metadata['k']} (d={s.json_metadata['d']})",
+            group_func=lambda s: group_func_with_style(s, 'green', '-'),
         )
     ax2.loglog()
     ax2.set_title("Diagonal Circuit (Diagonal Schedule)", fontsize=14)
@@ -503,11 +517,25 @@ def plot_logical_error_rates_multi_k(results_data, save_path="benchmark_plots/me
     # Also create a combined comparison plot
     fig2, ax = plt.subplots(1, 1, figsize=(10, 8))
     
+    # Combined group function with circuit-specific styling
+    def combined_group_func(s):
+        k = s.json_metadata['k']
+        d = s.json_metadata['d']
+        circuit = s.json_metadata['circuit']
+        is_original = circuit == 'Original Circuit'
+        return {
+            'label': f"{'Original' if is_original else 'Diagonal'} k={k}",
+            'marker': k_markers.get(k, 'o'),
+            'color': 'blue' if is_original else 'green',
+            'linestyle': '--' if is_original else '-',
+            'sort': (0 if is_original else 1, k),  # Sort by circuit type, then k
+        }
+    
     sinter.plot_error_rate(
         ax=ax,
         stats=stats_list,
         x_func=lambda s: s.json_metadata['p'],
-        group_func=lambda s: f"{s.json_metadata['circuit'].replace(' Circuit', '')} k={s.json_metadata['k']}",
+        group_func=combined_group_func,
     )
     
     ax.loglog()
