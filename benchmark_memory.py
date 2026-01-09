@@ -453,69 +453,8 @@ def plot_logical_error_rates_multi_k(results_data, save_path="benchmark_plots/me
     k_colors = {1: 'C0', 2: 'C1', 3: 'C2', 4: 'C3', 5: 'C4'}
     k_markers = {1: 'o', 2: 's', 3: '^', 4: 'D', 5: 'v'}
     
-    # Create figure with two subplots side by side
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7))
-    
-    # Plot Original Circuit
-    original_stats = [s for s in stats_list if s.json_metadata['circuit'] == 'Original Circuit']
-    if original_stats:
-        sinter.plot_error_rate(
-            ax=ax1,
-            stats=original_stats,
-            x_func=lambda s: s.json_metadata['p'],
-            group_func=lambda s: f"k={s.json_metadata['k']} (d={s.json_metadata['d']})",
-            plot_args_func=lambda index, curve_id: {
-                'color': k_colors.get(int(curve_id.split('=')[1].split()[0]), 'black'),
-                'marker': k_markers.get(int(curve_id.split('=')[1].split()[0]), 'o'),
-                'linestyle': '--',  # Dashed for standard
-            },
-        )
-    ax1.loglog()
-    ax1.set_title("Original Circuit (Standard Schedule)", fontsize=14)
-    ax1.set_xlabel("Physical Error Rate", fontsize=12)
-    ax1.set_ylabel("Logical Error Rate per Shot", fontsize=12)
-    ax1.grid(which='major', alpha=0.5)
-    ax1.grid(which='minor', alpha=0.2)
-    ax1.legend(fontsize=10)
-    
-    # Plot Diagonal Circuit
-    diagonal_stats = [s for s in stats_list if s.json_metadata['circuit'] == 'Diagonal Circuit']
-    if diagonal_stats:
-        sinter.plot_error_rate(
-            ax=ax2,
-            stats=diagonal_stats,
-            x_func=lambda s: s.json_metadata['p'],
-            group_func=lambda s: f"k={s.json_metadata['k']} (d={s.json_metadata['d']})",
-            plot_args_func=lambda index, curve_id: {
-                'color': k_colors.get(int(curve_id.split('=')[1].split()[0]), 'black'),
-                'marker': k_markers.get(int(curve_id.split('=')[1].split()[0]), 'o'),
-                'linestyle': '-',  # Solid for diagonal
-            },
-        )
-    ax2.loglog()
-    ax2.set_title("Diagonal Circuit (Diagonal Schedule)", fontsize=14)
-    ax2.set_xlabel("Physical Error Rate", fontsize=12)
-    ax2.set_ylabel("Logical Error Rate per Shot", fontsize=12)
-    ax2.grid(which='major', alpha=0.5)
-    ax2.grid(which='minor', alpha=0.2)
-    ax2.legend(fontsize=10)
-    
-    # Add overall title
-    fig.suptitle("Surface Code Memory Experiment: Logical Error Rates", fontsize=16, y=1.02)
-    
-    # Adjust layout
-    fig.tight_layout()
-    fig.set_dpi(150)
-    
-    # Save the plot
-    fig.savefig(save_path, dpi=300, bbox_inches='tight')
-    print(f"Logical error rate plot saved as: {save_path}")
-    
-    # Show the plot
-    plt.show()
-    
-    # Also create a combined comparison plot
-    fig2, ax = plt.subplots(1, 1, figsize=(12, 8))
+    # Create combined comparison plot
+    fig, ax = plt.subplots(1, 1, figsize=(12, 9))
     
     # Custom plot_args_func for combined plot
     def combined_plot_args(index, curve_id):
@@ -539,23 +478,23 @@ def plot_logical_error_rates_multi_k(results_data, save_path="benchmark_plots/me
     )
     
     ax.loglog()
-    ax.set_title("Surface Code Memory: Original vs Diagonal Schedule", fontsize=14)
-    ax.set_xlabel("Physical Error Rate", fontsize=12)
-    ax.set_ylabel("Logical Error Rate per Shot", fontsize=12)
+    ax.set_xlabel("Physical Error Rate (Uniform Depolarizing)", fontsize=16)
+    ax.set_ylabel("Logical Error Rate per Shot", fontsize=16)
+    ax.tick_params(axis='both', which='major', labelsize=14)
+    ax.tick_params(axis='both', which='minor', labelsize=12)
     ax.grid(which='major', alpha=0.5)
     ax.grid(which='minor', alpha=0.2)
-    ax.legend(fontsize=10, ncol=2)
-    fig2.set_dpi(150)
-    fig2.tight_layout()
+    ax.legend(fontsize=14, ncol=2)
+    fig.set_dpi(150)
+    fig.tight_layout()
     
-    # Save combined plot
-    combined_path = save_path.replace('.png', '_combined.png')
-    fig2.savefig(combined_path, dpi=300, bbox_inches='tight')
-    print(f"Combined plot saved as: {combined_path}")
+    # Save plot
+    fig.savefig(save_path, dpi=300, bbox_inches='tight')
+    print(f"Logical error rate plot saved as: {save_path}")
     
     plt.show()
     
-    return fig, fig2
+    return fig
 
 
 def calculate_circuit_distance(circuit):
@@ -742,7 +681,7 @@ def main():
     if args.noise_levels:
         noise_levels = args.noise_levels
     else:
-        noise_levels = np.logspace(-3.5, -2, 4)  # Default: 5 noise levels from 0.0001 to 0.01
+        noise_levels = np.logspace(-3.5, -2, 7)  # Default: 5 noise levels from 0.0001 to 0.01
     
     print(f"Testing k values: {k_values}")
     print(f"Surface code distances: {[2*k+1 for k in k_values]}")
