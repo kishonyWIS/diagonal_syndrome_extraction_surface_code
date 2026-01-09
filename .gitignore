@@ -40,7 +40,7 @@ Thumbs.db
 *.svg
 
 # Benchmark outputs
-*.csv
+benchmark_data/
 benchmark_plots/
 
 # Generated images (keep if needed for documentation)

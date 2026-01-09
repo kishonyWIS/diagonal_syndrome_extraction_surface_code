@@ -59,7 +59,7 @@ NUM_WORKERS = 10
 RANDOM_SEED = 42
 
 # Output file
-OUTPUT_CSV = 'spatial_hadamard_benchmark.csv'
+OUTPUT_CSV = 'benchmark_data/spatial_hadamard_benchmark.csv'
 
 
 # =============================================================================
@@ -341,6 +341,9 @@ def run_sinter_for_single_task(
 
 def append_results_to_csv(results: list[BenchmarkResult], filepath: str, write_header: bool = False) -> None:
     """Append benchmark results to CSV file."""
+    import os
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    
     fieldnames = [
         'direction',
         'flag_config',
