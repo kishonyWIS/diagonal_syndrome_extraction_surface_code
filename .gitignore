@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+*.egg
+
+# Virtual environment
+venv/
+.venv/
+
+# IDE
+.cursor/
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# PowerPoint lock files
+~$*.pptx
+
+# LaTeX auxiliary files
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.synctex.gz
+*.out
+*.toc
+
+# Output files (can be regenerated)
+*.stim
+*.html
+*.svg
+
+# Benchmark outputs
+*.csv
+benchmark_plots/
+
+# Generated images (keep if needed for documentation)
+# *.png

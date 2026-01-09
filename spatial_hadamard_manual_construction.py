@@ -2997,7 +2997,7 @@ def main():
             k=k,
             axis=axis,
             noise_model=noise_model,
-            measure_shared_data_final_only=False,
+            flag_config='partial',
         )
         circuits[axis] = circuit
         
