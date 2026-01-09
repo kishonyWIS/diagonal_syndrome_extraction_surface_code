@@ -398,89 +398,133 @@ def plot_distance_vs_k(distance_data, save_path="benchmark_plots/memory_distance
     return plt
 
 
+def results_to_sinter_stats(results_data):
+    """Convert results dictionary to list of sinter.TaskStats for plotting.
+    
+    Args:
+        results_data: Dict with structure {k: {circuit_name: {noise_level: {logical_error_rate, logical_errors, shots, error_bar}}}}
+        
+    Returns:
+        List of sinter.TaskStats objects
+    """
+    stats_list = []
+    
+    for k in results_data:
+        for circuit_name in results_data[k]:
+            circuit_results = results_data[k][circuit_name]
+            if not circuit_results:
+                continue
+            
+            for noise_level, result in circuit_results.items():
+                # Create TaskStats object
+                stats = sinter.TaskStats(
+                    strong_id=f"{circuit_name}_k{k}_p{noise_level}",
+                    decoder='pymatching',
+                    json_metadata={
+                        'p': noise_level,
+                        'k': k,
+                        'd': 2 * k + 1,  # Surface code distance
+                        'circuit': circuit_name,
+                    },
+                    shots=result['shots'],
+                    errors=result['logical_errors'],
+                )
+                stats_list.append(stats)
+    
+    return stats_list
+
+
 def plot_logical_error_rates_multi_k(results_data, save_path="benchmark_plots/memory_error_rates.png"):
-    """Plot logical error rate vs physical error rate for multiple k values and circuit types."""
+    """Plot logical error rate vs physical error rate using sinter.plot_error_rate."""
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     
     if not results_data:
         print("Cannot create plot - missing data")
         return
     
-    # Create the plot
-    plt.figure(figsize=(12, 10))
+    # Convert to sinter stats format
+    stats_list = results_to_sinter_stats(results_data)
     
-    # Define colors for different k values
-    k_colors = {1: 'blue', 2: 'red', 3: 'green', 4: 'orange', 5: 'purple'}
+    if not stats_list:
+        print("No data to plot")
+        return
     
-    # Define line styles for different circuit types
-    circuit_styles = {
-        'Original Circuit': '--',
-        'Diagonal Circuit': '-'
-    }
+    # Create figure with two subplots side by side
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7))
     
-    # Define markers for different circuit types
-    circuit_markers = {
-        'Original Circuit': 'o',
-        'Diagonal Circuit': 's'
-    }
+    # Plot Original Circuit
+    original_stats = [s for s in stats_list if s.json_metadata['circuit'] == 'Original Circuit']
+    if original_stats:
+        sinter.plot_error_rate(
+            ax=ax1,
+            stats=original_stats,
+            x_func=lambda s: s.json_metadata['p'],
+            group_func=lambda s: f"k={s.json_metadata['k']} (d={s.json_metadata['d']})",
+        )
+    ax1.set_title("Original Circuit (Standard Schedule)", fontsize=14)
+    ax1.set_xlabel("Physical Error Rate", fontsize=12)
+    ax1.set_ylabel("Logical Error Rate per Shot", fontsize=12)
+    ax1.grid(which='major', alpha=0.5)
+    ax1.grid(which='minor', alpha=0.2)
+    ax1.legend(fontsize=10)
     
-    for circuit_name in ['Original Circuit', 'Diagonal Circuit']:
-        for k in sorted(results_data.keys()):
-            if circuit_name in results_data[k]:
-                circuit_results = results_data[k][circuit_name]
-                if not circuit_results:
-                    continue
-                    
-                # Extract data
-                noise_levels = sorted(circuit_results.keys())
-                rates = [circuit_results[n]['logical_error_rate'] for n in noise_levels]
-                errors = [circuit_results[n]['error_bar'] for n in noise_levels]
-                
-                # Get color for this k value and style for this circuit
-                color = k_colors.get(k, 'black')
-                linestyle = circuit_styles.get(circuit_name, '-')
-                marker = circuit_markers.get(circuit_name, 'o')
-                
-                # Plot with error bars
-                plt.errorbar(noise_levels, rates, yerr=errors, 
-                           label=f'{circuit_name} (k={k})', 
-                           color=color, 
-                           linestyle=linestyle,
-                           marker=marker,
-                           capsize=3, capthick=1, linewidth=2, markersize=6,
-                           alpha=0.8)
+    # Plot Diagonal Circuit
+    diagonal_stats = [s for s in stats_list if s.json_metadata['circuit'] == 'Diagonal Circuit']
+    if diagonal_stats:
+        sinter.plot_error_rate(
+            ax=ax2,
+            stats=diagonal_stats,
+            x_func=lambda s: s.json_metadata['p'],
+            group_func=lambda s: f"k={s.json_metadata['k']} (d={s.json_metadata['d']})",
+        )
+    ax2.set_title("Diagonal Circuit (Diagonal Schedule)", fontsize=14)
+    ax2.set_xlabel("Physical Error Rate", fontsize=12)
+    ax2.set_ylabel("Logical Error Rate per Shot", fontsize=12)
+    ax2.grid(which='major', alpha=0.5)
+    ax2.grid(which='minor', alpha=0.2)
+    ax2.legend(fontsize=10)
     
-    # Customize the plot
-    plt.xlabel('Physical Error Rate', fontsize=14)
-    plt.ylabel('Logical Error Rate', fontsize=14)
-    plt.title('Logical Error Rate vs Physical Error Rate\nSurface Code Memory Experiment (Multiple k)', fontsize=16)
-    plt.legend(fontsize=10, ncol=2)
-    plt.grid(True, alpha=0.3)
-    plt.yscale('log')
-    plt.xscale('log')
+    # Add overall title
+    fig.suptitle("Surface Code Memory Experiment: Logical Error Rates", fontsize=16, y=1.02)
     
-    # Set axis limits
-    all_rates = []
-    all_noise_levels = []
-    for k_data in results_data.values():
-        for circuit_data in k_data.values():
-            if circuit_data:
-                all_rates.extend([circuit_data[n]['logical_error_rate'] for n in circuit_data.keys()])
-                all_noise_levels.extend(circuit_data.keys())
-    
-    if all_rates and all_noise_levels:
-        plt.xlim(min(all_noise_levels) * 0.5, max(all_noise_levels) * 2)
-        plt.ylim(min(all_rates) * 0.5, max(all_rates) * 2)
+    # Adjust layout
+    fig.tight_layout()
+    fig.set_dpi(150)
     
     # Save the plot
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    fig.savefig(save_path, dpi=300, bbox_inches='tight')
     print(f"Logical error rate plot saved as: {save_path}")
     
     # Show the plot
     plt.show()
     
-    return plt
+    # Also create a combined comparison plot
+    fig2, ax = plt.subplots(1, 1, figsize=(10, 8))
+    
+    sinter.plot_error_rate(
+        ax=ax,
+        stats=stats_list,
+        x_func=lambda s: s.json_metadata['p'],
+        group_func=lambda s: f"{s.json_metadata['circuit'].replace(' Circuit', '')} k={s.json_metadata['k']}",
+    )
+    
+    ax.set_title("Surface Code Memory: Original vs Diagonal Schedule", fontsize=14)
+    ax.set_xlabel("Physical Error Rate", fontsize=12)
+    ax.set_ylabel("Logical Error Rate per Shot", fontsize=12)
+    ax.grid(which='major', alpha=0.5)
+    ax.grid(which='minor', alpha=0.2)
+    ax.legend(fontsize=9, ncol=2)
+    fig2.set_dpi(150)
+    fig2.tight_layout()
+    
+    # Save combined plot
+    combined_path = save_path.replace('.png', '_combined.png')
+    fig2.savefig(combined_path, dpi=300, bbox_inches='tight')
+    print(f"Combined plot saved as: {combined_path}")
+    
+    plt.show()
+    
+    return fig, fig2
 
 
 def calculate_circuit_distance(circuit):
