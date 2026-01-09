@@ -449,31 +449,26 @@ def plot_logical_error_rates_multi_k(results_data, save_path="benchmark_plots/me
         print("No data to plot")
         return
     
-    # Define markers for different k values
+    # Define colors and markers by k value
+    k_colors = {1: 'C0', 2: 'C1', 3: 'C2', 4: 'C3', 5: 'C4'}
     k_markers = {1: 'o', 2: 's', 3: '^', 4: 'D', 5: 'v'}
-    
-    # Group function that returns styling dict for sinter
-    def group_func_with_style(s, color, linestyle):
-        k = s.json_metadata['k']
-        d = s.json_metadata['d']
-        return {
-            'label': f"k={k} (d={d})",
-            'marker': k_markers.get(k, 'o'),
-            'color': color,
-            'linestyle': linestyle,
-        }
     
     # Create figure with two subplots side by side
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7))
     
-    # Plot Original Circuit (dashed blue)
+    # Plot Original Circuit
     original_stats = [s for s in stats_list if s.json_metadata['circuit'] == 'Original Circuit']
     if original_stats:
         sinter.plot_error_rate(
             ax=ax1,
             stats=original_stats,
             x_func=lambda s: s.json_metadata['p'],
-            group_func=lambda s: group_func_with_style(s, 'blue', '--'),
+            group_func=lambda s: f"k={s.json_metadata['k']} (d={s.json_metadata['d']})",
+            plot_args_func=lambda index, curve_id: {
+                'color': k_colors.get(int(curve_id.split('=')[1].split()[0]), 'black'),
+                'marker': k_markers.get(int(curve_id.split('=')[1].split()[0]), 'o'),
+                'linestyle': '--',  # Dashed for standard
+            },
         )
     ax1.loglog()
     ax1.set_title("Original Circuit (Standard Schedule)", fontsize=14)
@@ -483,14 +478,19 @@ def plot_logical_error_rates_multi_k(results_data, save_path="benchmark_plots/me
     ax1.grid(which='minor', alpha=0.2)
     ax1.legend(fontsize=10)
     
-    # Plot Diagonal Circuit (solid green)
+    # Plot Diagonal Circuit
     diagonal_stats = [s for s in stats_list if s.json_metadata['circuit'] == 'Diagonal Circuit']
     if diagonal_stats:
         sinter.plot_error_rate(
             ax=ax2,
             stats=diagonal_stats,
             x_func=lambda s: s.json_metadata['p'],
-            group_func=lambda s: group_func_with_style(s, 'green', '-'),
+            group_func=lambda s: f"k={s.json_metadata['k']} (d={s.json_metadata['d']})",
+            plot_args_func=lambda index, curve_id: {
+                'color': k_colors.get(int(curve_id.split('=')[1].split()[0]), 'black'),
+                'marker': k_markers.get(int(curve_id.split('=')[1].split()[0]), 'o'),
+                'linestyle': '-',  # Solid for diagonal
+            },
         )
     ax2.loglog()
     ax2.set_title("Diagonal Circuit (Diagonal Schedule)", fontsize=14)
@@ -515,27 +515,27 @@ def plot_logical_error_rates_multi_k(results_data, save_path="benchmark_plots/me
     plt.show()
     
     # Also create a combined comparison plot
-    fig2, ax = plt.subplots(1, 1, figsize=(10, 8))
+    fig2, ax = plt.subplots(1, 1, figsize=(12, 8))
     
-    # Combined group function with circuit-specific styling
-    def combined_group_func(s):
-        k = s.json_metadata['k']
-        d = s.json_metadata['d']
-        circuit = s.json_metadata['circuit']
-        is_original = circuit == 'Original Circuit'
+    # Custom plot_args_func for combined plot
+    def combined_plot_args(index, curve_id):
+        # curve_id is like "Original k=1" or "Diagonal k=2"
+        parts = curve_id.split()
+        circuit_type = parts[0]  # "Original" or "Diagonal"
+        k = int(parts[1].split('=')[1])  # Extract k value
+        
         return {
-            'label': f"{'Original' if is_original else 'Diagonal'} k={k}",
+            'color': k_colors.get(k, 'black'),
             'marker': k_markers.get(k, 'o'),
-            'color': 'blue' if is_original else 'green',
-            'linestyle': '--' if is_original else '-',
-            'sort': (0 if is_original else 1, k),  # Sort by circuit type, then k
+            'linestyle': '--' if circuit_type == 'Original' else '-',
         }
     
     sinter.plot_error_rate(
         ax=ax,
         stats=stats_list,
         x_func=lambda s: s.json_metadata['p'],
-        group_func=combined_group_func,
+        group_func=lambda s: f"{s.json_metadata['circuit'].replace(' Circuit', '')} k={s.json_metadata['k']}",
+        plot_args_func=combined_plot_args,
     )
     
     ax.loglog()
@@ -544,7 +544,7 @@ def plot_logical_error_rates_multi_k(results_data, save_path="benchmark_plots/me
     ax.set_ylabel("Logical Error Rate per Shot", fontsize=12)
     ax.grid(which='major', alpha=0.5)
     ax.grid(which='minor', alpha=0.2)
-    ax.legend(fontsize=9, ncol=2)
+    ax.legend(fontsize=10, ncol=2)
     fig2.set_dpi(150)
     fig2.tight_layout()
     
