@@ -110,7 +110,9 @@ def replace_plaquettes_in_graph(compiled_graph):
 
 
 def compile_and_generate(graph, convention_name, convention, k=1, use_diagonal=False):
-    """Compile the graph and generate a Stim circuit."""
+    """Compile the graph and generate a Stim circuit (without noise, compacted)."""
+    from compact_circuit import compact_and_delay_init
+    
     print(f"\nCompiling with {convention_name} convention (k={k})...")
     
     try:
@@ -126,15 +128,16 @@ def compile_and_generate(graph, convention_name, convention, k=1, use_diagonal=F
         
         manhattan_radius = 2
         
-        # Create a noise model (uniform depolarizing noise with p=0.001)
-        noise_model = NoiseModel.uniform_depolarizing(0.001)
-        
+        # Generate circuit WITHOUT noise
         circuit = compiled_graph.generate_stim_circuit(
             k=k, 
             manhattan_radius=manhattan_radius,
-            noise_model=noise_model
+            noise_model=None
         )
-        print(f"✓ Successfully generated Stim circuit for k={k}")
+        
+        # Compact the circuit (ASAP + ALAP scheduling)
+        circuit = compact_and_delay_init(circuit)
+        print(f"✓ Successfully generated and compacted Stim circuit for k={k}")
         print(f"  Number of instructions: {len(circuit)}")
         print(f"  Number of qubits: {circuit.num_qubits}")
         print(f"  Number of detectors: {circuit.num_detectors}")
@@ -145,10 +148,13 @@ def compile_and_generate(graph, convention_name, convention, k=1, use_diagonal=F
         crumble_url = compiled_graph.generate_crumble_url(k=k)
         print(f"✓ Crumble URL generated")
         
-        # Calculate graph-like distance
+        # Calculate graph-like distance (needs noise)
         print("\nCalculating graph-like distance...")
         try:
-            graphlike_errors = circuit.shortest_graphlike_error(canonicalize_circuit_errors=True)
+            # Add noise for distance calculation
+            distance_noise_model = NoiseModel.uniform_depolarizing(0.001)
+            noisy_circuit_for_distance = distance_noise_model.noisy_circuit(circuit)
+            graphlike_errors = noisy_circuit_for_distance.shortest_graphlike_error(canonicalize_circuit_errors=True)
             graphlike_distance = len(graphlike_errors)
             print(f"✓ Graph-like distance: {graphlike_distance}")
         except Exception as e:
@@ -175,7 +181,13 @@ def compile_and_generate(graph, convention_name, convention, k=1, use_diagonal=F
 
 
 def calculate_logical_error_rate(circuit, shots=50000, noise_levels=[0.001, 0.002, 0.005]):
-    """Calculate logical error rate using sinter."""
+    """Calculate logical error rate using sinter.
+    
+    Args:
+        circuit: A noise-free stim circuit (noise will be added)
+        shots: Number of shots per noise level
+        noise_levels: List of physical error rates to test
+    """
     if not PYMATCHING_AVAILABLE:
         print("Skipping logical error rate calculation - pymatching not available")
         return {}
@@ -187,13 +199,9 @@ def calculate_logical_error_rate(circuit, shots=50000, noise_levels=[0.001, 0.00
     for noise_level in noise_levels:
         print(f"  Testing noise level: {noise_level}")
         
-        # Create a circuit with the specified noise level
-        noisy_circuit = circuit.copy()
-        
-        # Replace noise parameters with the desired noise level
-        noisy_circuit_str = str(noisy_circuit)
-        noisy_circuit_str = noisy_circuit_str.replace('0.001', str(noise_level))
-        noisy_circuit = stim.Circuit(noisy_circuit_str)
+        # Add noise to the circuit using NoiseModel.noisy_circuit()
+        noise_model = NoiseModel.uniform_depolarizing(noise_level)
+        noisy_circuit = noise_model.noisy_circuit(circuit)
         
         # Use sinter to collect statistics
         task = sinter.Task(

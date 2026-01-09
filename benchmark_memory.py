@@ -218,7 +218,9 @@ def create_diagonal_convention():
 
 
 def create_original_memory_circuit(k=2):
-    """Create the original memory experiment circuit."""
+    """Create the original memory experiment circuit (without noise, compacted)."""
+    from compact_circuit import compact_and_delay_init
+    
     print("Creating original memory experiment circuit...")
     
     # Create memory block graph
@@ -227,15 +229,19 @@ def create_original_memory_circuit(k=2):
     # Compile with default convention
     compiled = compile_block_graph(mem_graph)
     
-    # Generate stim circuit
-    noise_model = NoiseModel.uniform_depolarizing(0.001)
-    circuit = compiled.generate_stim_circuit(k=k, noise_model=noise_model)
+    # Generate stim circuit WITHOUT noise
+    circuit = compiled.generate_stim_circuit(k=k, noise_model=None)
+    
+    # Compact the circuit (ASAP + ALAP scheduling)
+    circuit = compact_and_delay_init(circuit)
     
     return circuit
 
 
 def create_diagonal_memory_circuit(k=2):
-    """Create the diagonal memory experiment circuit using diagonal plaquettes."""
+    """Create the diagonal memory experiment circuit using diagonal plaquettes (without noise, compacted)."""
+    from compact_circuit import compact_and_delay_init
+    
     print("Creating diagonal memory experiment circuit with diagonal plaquettes...")
     
     # Create memory block graph
@@ -247,9 +253,11 @@ def create_diagonal_memory_circuit(k=2):
     # Compile with diagonal convention
     compiled = compile_block_graph(mem_graph, convention=diagonal_convention)
     
-    # Generate stim circuit
-    noise_model = NoiseModel.uniform_depolarizing(0.001)
-    circuit = compiled.generate_stim_circuit(k=k, noise_model=noise_model)
+    # Generate stim circuit WITHOUT noise
+    circuit = compiled.generate_stim_circuit(k=k, noise_model=None)
+    
+    # Compact the circuit (ASAP + ALAP scheduling)
+    circuit = compact_and_delay_init(circuit)
     
     return circuit
 
@@ -257,30 +265,27 @@ def create_diagonal_memory_circuit(k=2):
 
 
 def calculate_logical_error_rate(circuit, shots=100000, noise_levels=[0.001, 0.002, 0.005]):
-    """Calculate logical error rate using sinter."""
+    """Calculate logical error rate using sinter.
+    
+    Args:
+        circuit: A noise-free stim circuit (noise will be added)
+        shots: Number of shots per noise level
+        noise_levels: List of physical error rates to test
+    """
     if not PYMATCHING_AVAILABLE:
         print("Skipping logical error rate calculation - pymatching not available")
         return {}
     
     print(f"Calculating logical error rate with {shots} shots...")
     
-    # Define noise levels to test
     results = {}
     
     for noise_level in noise_levels:
         print(f"  Testing noise level: {noise_level}")
         
-        # Create a circuit with the specified noise level
-        noisy_circuit = circuit.copy()
-        
-        # Replace noise parameters with the desired noise level
-        noisy_circuit_str = str(noisy_circuit)
-        noisy_circuit_str = noisy_circuit_str.replace('0.001', str(noise_level))
-        import stim
-        noisy_circuit = stim.Circuit(noisy_circuit_str)
-        
-        # Use sinter to collect statistics
-        import sinter
+        # Add noise to the circuit using NoiseModel.noisy_circuit()
+        noise_model = NoiseModel.uniform_depolarizing(noise_level)
+        noisy_circuit = noise_model.noisy_circuit(circuit)
         
         # Create a task for sinter
         task = sinter.Task(
@@ -293,7 +298,7 @@ def calculate_logical_error_rate(circuit, shots=100000, noise_levels=[0.001, 0.0
         stats = sinter.collect(
             tasks=[task],
             max_shots=shots,
-            max_errors=3000,  # Allow all shots to be errors if needed
+            max_errors=3000,
             num_workers=10
         )
         
@@ -304,7 +309,6 @@ def calculate_logical_error_rate(circuit, shots=100000, noise_levels=[0.001, 0.0
             logical_errors = stat.errors
             
             # Calculate error bars using binomial distribution
-            # Standard error for binomial distribution: sqrt(p*(1-p)/n)
             error_bar = np.sqrt(logical_error_rate * (1 - logical_error_rate) / stat.shots)
             
             results[noise_level] = {
@@ -740,10 +744,15 @@ def main():
             print(f"Calculating circuit distances for k={k}...")
             k_distances = {}
             
+            # Need to add noise for distance calculation
+            distance_noise_model = NoiseModel.uniform_depolarizing(0.001)
+            
             for name, circuit in circuits.items():
                 try:
-                    graphlike_dist = len(circuit.shortest_graphlike_error(canonicalize_circuit_errors=True))
-                    circuit_dist = calculate_circuit_distance(circuit)
+                    # Add noise for distance calculation
+                    noisy_circuit = distance_noise_model.noisy_circuit(circuit)
+                    graphlike_dist = len(noisy_circuit.shortest_graphlike_error(canonicalize_circuit_errors=True))
+                    circuit_dist = calculate_circuit_distance(noisy_circuit)
                     k_distances[name] = {
                         'graphlike': graphlike_dist,
                         'circuit': circuit_dist

@@ -209,15 +209,22 @@ class BenchmarkResult:
 
 def generate_circuit_for_config(
     config: CircuitConfig,
-    noise_model: Optional[NoiseModel] = None,
 ) -> stim.Circuit:
-    """Generate a spatial Hadamard circuit for the given configuration."""
-    return generate_spatial_hadamard_circuit(
+    """Generate a spatial Hadamard circuit for the given configuration (without noise, compacted)."""
+    from compact_circuit import compact_and_delay_init
+    
+    # Generate circuit WITHOUT noise
+    circuit = generate_spatial_hadamard_circuit(
         k=config.k,
         axis=config.direction,
-        noise_model=noise_model,
+        noise_model=None,
         flag_config=config.flag_config,
     )
+    
+    # Compact the circuit (ASAP + ALAP scheduling)
+    circuit = compact_and_delay_init(circuit)
+    
+    return circuit
 
 
 def compute_distances_for_all_configs() -> dict[tuple, int]:
@@ -243,13 +250,16 @@ def compute_distances_for_all_configs() -> dict[tuple, int]:
                 config = CircuitConfig(direction, flag_config, k)
                 print(f"\nGenerating circuit: {config}")
                 
-                # Generate circuit with noise for distance calculation
-                circuit = generate_circuit_for_config(config, noise_model=distance_noise_model)
+                # Generate compacted circuit (without noise)
+                circuit = generate_circuit_for_config(config)
                 
-                print(f"  Qubits: {circuit.num_qubits}, Detectors: {circuit.num_detectors}")
+                # Add noise for distance calculation
+                noisy_circuit = distance_noise_model.noisy_circuit(circuit)
+                
+                print(f"  Qubits: {noisy_circuit.num_qubits}, Detectors: {noisy_circuit.num_detectors}")
                 
                 # Calculate distance
-                distance = calculate_graphlike_distance(circuit)
+                distance = calculate_graphlike_distance(noisy_circuit)
                 distances[(direction, flag_config, k)] = distance
                 
                 print(f"  Graph-like distance: {distance}")
@@ -457,9 +467,12 @@ def run_benchmark(skip_distance: bool = True) -> list[BenchmarkResult]:
                         
                         print(f"      [{current_task}/{total_tasks}] {config}")
                         
-                        # Generate circuit
+                        # Generate compacted circuit (without noise)
+                        circuit = generate_circuit_for_config(config)
+                        
+                        # Add noise using NoiseModel.noisy_circuit()
                         noise_model = NoiseModel.uniform_depolarizing(noise_level)
-                        circuit = generate_circuit_for_config(config, noise_model)
+                        noisy_circuit = noise_model.noisy_circuit(circuit)
                         
                         metadata = {
                             'direction': direction,
@@ -472,7 +485,7 @@ def run_benchmark(skip_distance: bool = True) -> list[BenchmarkResult]:
                         # Run this decoder for this configuration
                         try:
                             result = run_sinter_for_single_task(
-                                circuit=circuit,
+                                circuit=noisy_circuit,
                                 metadata=metadata,
                                 decoder_name=decoder_name,
                                 max_shots=MAX_SHOTS,
