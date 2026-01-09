@@ -17,10 +17,36 @@ from tqec import compile_block_graph
 from tqec.utils.enums import Basis
 
 # Modify the hook error line coefficient for our visualizations
-# This must be done before any SVG generation
+# Monkey-patch DrawerConfiguration to use 0.8 instead of 0.9 for hook error lines
 from tqec.visualisation.configuration import DrawerConfiguration
-# Monkey-patch the default value (0.9 -> 0.8 for shorter hook error lines)
-DrawerConfiguration.__dataclass_fields__['hook_error_line_lerp_coefficient'].default = 0.8
+
+_original_drawer_config_init = DrawerConfiguration.__init__
+
+def _patched_drawer_config_init(self, *args, **kwargs):
+    # Set our custom default if not explicitly provided
+    if 'hook_error_line_lerp_coefficient' not in kwargs:
+        kwargs['hook_error_line_lerp_coefficient'] = 0.8
+    _original_drawer_config_init(self, *args, **kwargs)
+
+DrawerConfiguration.__init__ = _patched_drawer_config_init
+
+# Also patch the default arguments in the grid module functions
+# which contain pre-instantiated DrawerConfiguration objects
+import tqec.visualisation.computation.plaquette.grid as grid_module
+
+# plaquette_grid_svg_viewer defaults
+grid_module.plaquette_grid_svg_viewer.__defaults__ = (
+    None, None, None, None, True, True, True, (0, 0), (), 
+    DrawerConfiguration(),  # This now uses our patched __init__ with 0.8
+    None,
+)
+
+# plaquette_grid_to_svg defaults
+grid_module.plaquette_grid_to_svg.__defaults__ = (
+    True, True, True, (0, 0), (), 
+    DrawerConfiguration(),  # This now uses our patched __init__ with 0.8
+    None,
+)
 
 # Import the diagonal convention from benchmark_memory
 from benchmark_memory import create_diagonal_convention
