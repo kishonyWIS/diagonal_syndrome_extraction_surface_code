@@ -25,7 +25,7 @@ _original_drawer_config_init = DrawerConfiguration.__init__
 def _patched_drawer_config_init(self, *args, **kwargs):
     # Set our custom default if not explicitly provided
     if 'hook_error_line_lerp_coefficient' not in kwargs:
-        kwargs['hook_error_line_lerp_coefficient'] = 0.8
+        kwargs['hook_error_line_lerp_coefficient'] = 0.7
     _original_drawer_config_init(self, *args, **kwargs)
 
 DrawerConfiguration.__init__ = _patched_drawer_config_init
@@ -47,6 +47,16 @@ grid_module.plaquette_grid_to_svg.__defaults__ = (
     DrawerConfiguration(),  # This now uses our patched __init__ with 0.8
     None,
 )
+
+# Remove the "Moments: X -> Y" title text from SVGs
+import svg
+from tqec.visualisation.computation.tree import LayerVisualiser
+
+def _empty_moment_text(self, start: int, end: int) -> svg.G:
+    """Return an empty SVG element instead of the moment text."""
+    return svg.G()  # Empty group element
+
+LayerVisualiser.get_moment_text = _empty_moment_text
 
 # Import the diagonal convention from benchmark_memory
 from benchmark_memory import create_diagonal_convention
