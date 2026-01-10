@@ -617,21 +617,27 @@ def asap_alap_schedule(circuit: stim.Circuit, remove_noise: bool = False) -> sti
         time_to_ops[new_t].append((idx, gate_name, qubits, args, meas_id))
     
     # Determine the new order of measurements
-    # IMPORTANT: preserve original relative order within each timestep (sort by original idx, not qubit)
+    # IMPORTANT: Must match the actual output order, which groups by gate type within each timestep
     new_measurement_order: list[tuple[int, int]] = []  # (meas_id, qubit)
     sorted_times = sorted(time_to_ops.keys())
     
     for t in sorted_times:
         ops = time_to_ops[t]
-        # Within a timestep, keep measurements in their original idx order (preserves relative order)
-        measurement_ops = [(idx, gate_name, qubits, args, meas_id) 
-                          for idx, gate_name, qubits, args, meas_id in ops 
-                          if is_measurement_gate(gate_name)]
-        # Sort by original idx to preserve relative order
-        measurement_ops.sort(key=lambda x: x[0])
-        for idx, gate_name, qubits, args, meas_id in measurement_ops:
-            if meas_id is not None:
-                new_measurement_order.append((meas_id, qubits[0]))
+        # Sort ops by original idx
+        ops_sorted = sorted(ops, key=lambda x: x[0])
+        
+        # Group by gate type (same as output circuit building)
+        gate_groups: dict[str, list[tuple[int, str, list[int], list[float], Optional[int]]]] = defaultdict(list)
+        for idx, gate_name, qubits, args, meas_id in ops_sorted:
+            gate_groups[gate_name].append((idx, gate_name, qubits, args, meas_id))
+        
+        # Extract measurements in the same order they'll appear in output
+        # (grouped by gate type, with original idx order within each group)
+        for gate_name, group_ops in gate_groups.items():
+            if is_measurement_gate(gate_name):
+                for idx, gn, qubits, args, meas_id in group_ops:
+                    if meas_id is not None:
+                        new_measurement_order.append((meas_id, qubits[0]))
     
     # Build mapping from measurement_id to new index (from end)
     total_measurements = len(new_measurement_order)
