@@ -2081,6 +2081,64 @@ def generate_two_cube_circuit(
     return circuit
 
 
+def get_spatial_hadamard_layer_tree(axis: str = 'x') -> LayerTree:
+    """
+    Get the LayerTree for spatial hadamard visualization.
+    
+    Args:
+        axis: 'x' or 'y' - direction of the two-cube layout
+        
+    Returns:
+        LayerTree that can be used for visualization with layers_to_svg()
+    """
+    translator = create_translator()
+    template = QubitTemplate()
+    
+    if axis == 'x':
+        # ZXZ cube at (0, 0), XZX cube at (1, 0)
+        zxz_init = create_zxz_plaquettes(translator, reset="z", use_custom_coupling=True)
+        zxz_bulk = create_zxz_plaquettes(translator, use_custom_coupling=True)
+        zxz_meas = create_zxz_plaquettes(translator, measurement="z", use_custom_coupling=True)
+        
+        xzx_init = create_xzx_plaquettes(translator, reset="x", use_custom_coupling=True)
+        xzx_bulk = create_xzx_plaquettes(translator, use_custom_coupling=True)
+        xzx_meas = create_xzx_plaquettes(translator, measurement="x", use_custom_coupling=True)
+        
+        cube_plaquettes = {
+            (0, 0): (zxz_init, zxz_bulk, zxz_meas),
+            (1, 0): (xzx_init, xzx_bulk, xzx_meas),
+        }
+        
+        combined_observable = create_combined_observable([
+            ("ZXZ", (0, 0, 0)),
+            ("XZX", (1, 0, 0)),
+        ])
+    elif axis == 'y':
+        # XZZ cube at (0, 0), ZXX cube at (0, 1)
+        xzz_init = create_xzz_plaquettes(translator, reset="z", use_custom_coupling=True)
+        xzz_bulk = create_xzz_plaquettes(translator, use_custom_coupling=True)
+        xzz_meas = create_xzz_plaquettes(translator, measurement="z", use_custom_coupling=True)
+        
+        zxx_init = create_zxx_plaquettes(translator, reset="x", use_custom_coupling=True)
+        zxx_bulk = create_zxx_plaquettes(translator, use_custom_coupling=True)
+        zxx_meas = create_zxx_plaquettes(translator, measurement="x", use_custom_coupling=True)
+        
+        cube_plaquettes = {
+            (0, 0): (xzz_init, xzz_bulk, xzz_meas),
+            (0, 1): (zxx_init, zxx_bulk, zxx_meas),
+        }
+        
+        combined_observable = create_combined_observable([
+            ("XZZ", (0, 0, 0)),
+            ("ZXX", (0, 1, 0)),
+        ])
+    else:
+        raise ValueError(f"axis must be 'x' or 'y', got '{axis}'")
+    
+    layers = create_multi_cube_layers(template, cube_plaquettes)
+    return create_layer_tree(layers, [combined_observable])
+
+
 def generate_two_cube_circuit_y_axis(
     k: int = 2,
     noise_model: NoiseModel | None = None,
