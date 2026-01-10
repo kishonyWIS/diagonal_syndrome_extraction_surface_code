@@ -12,16 +12,18 @@ Parameters swept:
 - Direction: 'x', 'y'
 - Flag config: 'all', 'partial', 'none'
 - k: 1, 2, 3
-- Physical error rate: np.logspace(-3.5, -2, 4)
+- Physical error rate: np.logspace(-3.5, -2, 7)
 - Decoder: plain pymatching, correlated pymatching, tesseract
 """
 
 import csv
+import os
 import sys
 import time
 from dataclasses import dataclass
 from typing import Optional
 import numpy as np
+import matplotlib.pyplot as plt
 import pymatching
 import stim
 import sinter
@@ -47,9 +49,9 @@ DIRECTIONS = ['x', 'y']
 #   'all': flags measured every round (measure_shared_data_final_only=False)
 #   'partial': flags measured only in final round (measure_shared_data_final_only=True)
 #   'none': no flags at all (measure_coupling_aux_mz=False, measure_shared_data=False)
-FLAG_CONFIGS = ['all', 'partial', 'none']
+FLAG_CONFIGS = ['none', 'partial', 'all']
 K_VALUES = [1, 2, 3]
-PHYSICAL_ERROR_RATES = np.logspace(-3.5, -2, 4)  # ~[0.000316, 0.001, 0.00316, 0.01]
+PHYSICAL_ERROR_RATES = np.logspace(-3.5, -2, 7)  # ~[0.000316, 0.001, 0.00316, 0.01]
 DECODERS = ['pymatching', 'correlated_pymatching', 'tesseract']
 
 # Sampling configuration
@@ -209,10 +211,19 @@ class BenchmarkResult:
 
 def generate_circuit_for_config(
     config: CircuitConfig,
+    return_both: bool = False,
+    compact: bool = False,
 ) -> stim.Circuit:
-    """Generate a spatial Hadamard circuit for the given configuration (without noise, compacted)."""
-    from compact_circuit import compact_and_delay_init
+    """Generate a spatial Hadamard circuit for the given configuration (without noise).
     
+    Args:
+        config: Circuit configuration
+        return_both: If True, return tuple (before_compact, after_compact)
+        compact: If True, compact the circuit (ASAP + ALAP scheduling).
+                 NOTE: Compaction is disabled by default because it breaks some
+                 flag configurations (specifically 'partial x') by creating
+                 non-deterministic detectors.
+    """
     # Generate circuit WITHOUT noise
     circuit = generate_spatial_hadamard_circuit(
         k=config.k,
@@ -221,9 +232,15 @@ def generate_circuit_for_config(
         flag_config=config.flag_config,
     )
     
-    # Compact the circuit (ASAP + ALAP scheduling)
-    circuit = compact_and_delay_init(circuit)
+    if compact:
+        from compact_circuit import compact_and_delay_init
+        circuit_compacted = compact_and_delay_init(circuit)
+        if return_both:
+            return circuit, circuit_compacted
+        return circuit_compacted
     
+    if return_both:
+        return circuit, circuit  # No compaction, both are the same
     return circuit
 
 
@@ -550,6 +567,255 @@ def save_results_to_csv(results: list[BenchmarkResult], filepath: str) -> None:
     print(f"Saved {len(results)} results to {filepath}")
 
 
+def save_crumble_urls_html(urls_dict, output_dir="crumble_urls", experiment_name="spatial_hadamard"):
+    """Save Crumble URLs as HTML files with clickable links.
+    
+    Args:
+        urls_dict: Dict with structure {config_str: {'before': url, 'after': url}}
+        output_dir: Directory to save HTML files
+        experiment_name: Name of the experiment for the HTML title
+    """
+    import os
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Create an index HTML file
+    index_html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>{experiment_name.replace('_', ' ').title()} - Crumble URLs</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 20px; }}
+        h1 {{ color: #333; }}
+        h2 {{ color: #555; margin-top: 30px; }}
+        h3 {{ color: #777; }}
+        .circuit {{ margin: 10px 0; padding: 10px; background: #f5f5f5; border-radius: 5px; }}
+        a {{ color: #0066cc; text-decoration: none; }}
+        a:hover {{ text-decoration: underline; }}
+        .before {{ color: #cc6600; }}
+        .after {{ color: #006600; }}
+    </style>
+</head>
+<body>
+    <h1>{experiment_name.replace('_', ' ').title()} - Crumble Circuit Visualizations</h1>
+"""
+    
+    for config_str, urls in sorted(urls_dict.items()):
+        index_html += f"    <div class='circuit'>\n"
+        index_html += f"        <h3>{config_str}</h3>\n"
+        
+        # Support both old format (before/after) and new format (circuit only)
+        if 'circuit' in urls and urls['circuit']:
+            index_html += f"        <p><a href='{urls['circuit']}' target='_blank'>Open in Crumble</a></p>\n"
+        else:
+            if 'before' in urls and urls['before']:
+                index_html += f"        <p class='before'>Before compactification: <a href='{urls['before']}' target='_blank'>Open in Crumble</a></p>\n"
+            
+            if 'after' in urls and urls['after']:
+                index_html += f"        <p class='after'>After compactification: <a href='{urls['after']}' target='_blank'>Open in Crumble</a></p>\n"
+        
+        index_html += f"    </div>\n"
+    
+    index_html += """</body>
+</html>
+"""
+    
+    # Save the index file
+    index_path = os.path.join(output_dir, f"{experiment_name}_crumble_urls.html")
+    with open(index_path, 'w') as f:
+        f.write(index_html)
+    
+    print(f"Saved Crumble URLs to {index_path}")
+
+
+# =============================================================================
+# Plotting Functions
+# =============================================================================
+
+def load_results_from_csv(filepath: str = "benchmark_data/spatial_hadamard_benchmark.csv") -> list[dict]:
+    """Load benchmark results from CSV file.
+    
+    Returns:
+        List of dictionaries with result data
+    """
+    results = []
+    
+    with open(filepath, 'r', newline='') as csvfile:
+        reader = csv.DictReader(csvfile)
+        for row in reader:
+            results.append({
+                'direction': row['direction'],
+                'flag_config': row['flag_config'],
+                'k': int(row['k']),
+                'distance': int(row['distance']) if row['distance'] else None,
+                'physical_error_rate': float(row['physical_error_rate']),
+                'decoder': row['decoder'],
+                'logical_error_rate': float(row['logical_error_rate']),
+                'errors': int(row['errors']),
+                'shots': int(row['shots']),
+                'error_bar': float(row['error_bar']),
+                'decode_time': float(row['decode_time']),
+            })
+    
+    print(f"Loaded {len(results)} results from {filepath}")
+    return results
+
+
+def results_to_sinter_stats(results: list[dict], decoder_filter: str = None) -> list[sinter.TaskStats]:
+    """Convert results to sinter.TaskStats for plotting.
+    
+    Args:
+        results: List of result dictionaries
+        decoder_filter: If specified, only include results for this decoder
+    
+    Returns:
+        List of sinter.TaskStats objects
+    """
+    stats_list = []
+    
+    for result in results:
+        if decoder_filter and result['decoder'] != decoder_filter:
+            continue
+        
+        # Create a descriptive label
+        # Format: "direction flag_config k=N"
+        stats = sinter.TaskStats(
+            strong_id=f"{result['direction']}_{result['flag_config']}_k{result['k']}_p{result['physical_error_rate']}_{result['decoder']}",
+            decoder=result['decoder'],
+            json_metadata={
+                'p': result['physical_error_rate'],
+                'k': result['k'],
+                'd': 2 * result['k'] + 1,
+                'direction': result['direction'],
+                'flag_config': result['flag_config'],
+                'decoder': result['decoder'],
+            },
+            shots=result['shots'],
+            errors=result['errors'],
+        )
+        stats_list.append(stats)
+    
+    return stats_list
+
+
+def plot_error_rates(
+    results: list[dict],
+    decoder: str = 'pymatching',
+    save_path: str = "benchmark_plots/spatial_hadamard_error_rates.png"
+):
+    """Plot logical error rates using sinter.plot_error_rate.
+    
+    Creates two panels: one for x direction, one for y direction.
+    Groups by (flag_config, k) with consistent styling.
+    
+    Args:
+        results: List of result dictionaries
+        decoder: Which decoder's results to plot
+        save_path: Path to save the plot
+    """
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    
+    # Filter results for this decoder
+    stats_list = results_to_sinter_stats(results, decoder_filter=decoder)
+    
+    if not stats_list:
+        print(f"No data to plot for decoder: {decoder}")
+        return
+    
+    # Define colors by k value
+    k_colors = {1: 'C0', 2: 'C1', 3: 'C2', 4: 'C3', 5: 'C4'}
+    
+    # Define markers by flag_config
+    flag_markers = {'all': 'o', 'partial': 's', 'none': '^'}
+    
+    # Define linestyles by flag_config (since direction is now in separate panels)
+    flag_styles = {'all': '-', 'partial': '--', 'none': ':'}
+    
+    # Create figure with two panels, sharing y-axis
+    fig, axes = plt.subplots(1, 2, figsize=(18, 8), sharey=True)
+    
+    def plot_args_func(index, curve_id):
+        # curve_id format: "0_none k=1" or "1_partial k=2" (with sort prefix)
+        parts = curve_id.split()
+        # Remove the sort prefix (e.g., "0_none" -> "none")
+        flag_config = parts[0].split('_')[1] if '_' in parts[0] else parts[0]
+        k = int(parts[1].split('=')[1])
+        
+        return {
+            'color': k_colors.get(k, 'black'),
+            'marker': flag_markers.get(flag_config, 'o'),
+            'linestyle': flag_styles.get(flag_config, '-'),
+        }
+    
+    # Define the desired order for flag_config (used for sorting legend)
+    flag_order = {'none': '0', 'partial': '1', 'all': '2'}
+    
+    # Plot for each direction
+    for i, (ax, direction) in enumerate(zip(axes, ['x', 'y'])):
+        # Filter stats for this direction
+        direction_stats = [s for s in stats_list if s.json_metadata['direction'] == direction]
+        
+        if not direction_stats:
+            continue
+        
+        # Use a sortable prefix in group_func to control legend order
+        # Format: "0_none k=1" will sort before "1_partial k=1" which sorts before "2_all k=1"
+        sinter.plot_error_rate(
+            ax=ax,
+            stats=direction_stats,
+            x_func=lambda s: s.json_metadata['p'],
+            group_func=lambda s: f"{flag_order[s.json_metadata['flag_config']]}_{s.json_metadata['flag_config']} k={s.json_metadata['k']}",
+            plot_args_func=plot_args_func,
+        )
+        
+        # Fix legend labels by removing the sort prefix
+        handles, labels = ax.get_legend_handles_labels()
+        new_labels = [label.split('_', 1)[1] if '_' in label else label for label in labels]
+        ax.legend(handles, new_labels, fontsize=12, ncol=3, loc='best')
+        
+        ax.loglog()
+        ax.set_xlabel("Physical Error Rate (Uniform Depolarizing)", fontsize=16)
+        if i == 0:  # Only set ylabel on left panel
+            ax.set_ylabel("Logical Error Rate (per Shot)", fontsize=16)
+        ax.tick_params(axis='both', which='major', labelsize=14)
+        ax.tick_params(axis='both', which='minor', labelsize=12)
+        ax.grid(which='major', alpha=0.5)
+        ax.grid(which='minor', alpha=0.2)
+        ax.set_title(f"{direction} direction", fontsize=16)
+    
+    fig.set_dpi(150)
+    fig.tight_layout()
+    
+    # Save plot
+    fig.savefig(save_path, dpi=300, bbox_inches='tight')
+    print(f"Saved error rate plot to {save_path}")
+    
+    plt.close()
+    
+    return fig
+
+
+def plot_all_decoders(
+    results: list[dict],
+    output_dir: str = "benchmark_plots"
+):
+    """Plot error rates for all decoders.
+    
+    Args:
+        results: List of result dictionaries
+        output_dir: Directory to save plots
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Get unique decoders
+    decoders = set(r['decoder'] for r in results)
+    
+    for decoder in sorted(decoders):
+        save_path = os.path.join(output_dir, f"spatial_hadamard_{decoder}_error_rates.png")
+        plot_error_rates(results, decoder=decoder, save_path=save_path)
+    
+    print(f"\nGenerated plots for {len(decoders)} decoders in {output_dir}")
+
+
 def print_summary(results: list[BenchmarkResult]) -> None:
     """Print a summary of the benchmark results."""
     print("\n" + "=" * 70)
@@ -604,6 +870,34 @@ def main():
     print()
     
     start_time = time.time()
+    
+    # Generate Crumble URLs for all configurations
+    print("=" * 70)
+    print("Generating Crumble URLs for all configurations")
+    print("=" * 70)
+    print("Note: Compaction is disabled for spatial hadamard circuits")
+    
+    all_crumble_urls = {}
+    for direction in DIRECTIONS:
+        for flag_config in FLAG_CONFIGS:
+            for k in K_VALUES:
+                config = CircuitConfig(direction, flag_config, k)
+                config_str = f"direction={direction}, flags={flag_config}, k={k}"
+                
+                try:
+                    circuit = generate_circuit_for_config(config)
+                    url = circuit.to_crumble_url()
+                    
+                    all_crumble_urls[config_str] = {
+                        'circuit': url,
+                    }
+                    print(f"  Generated URL for {config_str}")
+                except Exception as e:
+                    print(f"  Error generating URL for {config_str}: {e}")
+    
+    # Save Crumble URLs to HTML
+    if all_crumble_urls:
+        save_crumble_urls_html(all_crumble_urls, output_dir="crumble_urls", experiment_name="spatial_hadamard")
     
     # Run benchmark (skip distance calculation - already verified)
     # Results are saved incrementally to CSV after each configuration
