@@ -212,36 +212,29 @@ class BenchmarkResult:
 def generate_circuit_for_config(
     config: CircuitConfig,
     return_both: bool = False,
-    compact: bool = False,
 ) -> stim.Circuit:
-    """Generate a spatial Hadamard circuit for the given configuration (without noise).
+    """Generate a spatial Hadamard circuit for the given configuration (without noise, compacted).
     
     Args:
         config: Circuit configuration
         return_both: If True, return tuple (before_compact, after_compact)
-        compact: If True, compact the circuit (ASAP + ALAP scheduling).
-                 NOTE: Compaction is disabled by default because it breaks some
-                 flag configurations (specifically 'partial x') by creating
-                 non-deterministic detectors.
     """
+    from compact_circuit import compact_and_delay_init
+    
     # Generate circuit WITHOUT noise
-    circuit = generate_spatial_hadamard_circuit(
+    circuit_before = generate_spatial_hadamard_circuit(
         k=config.k,
         axis=config.direction,
         noise_model=None,
         flag_config=config.flag_config,
     )
     
-    if compact:
-        from compact_circuit import compact_and_delay_init
-        circuit_compacted = compact_and_delay_init(circuit)
-        if return_both:
-            return circuit, circuit_compacted
-        return circuit_compacted
+    # Compact the circuit (ASAP + ALAP scheduling)
+    circuit_after = compact_and_delay_init(circuit_before)
     
     if return_both:
-        return circuit, circuit  # No compaction, both are the same
-    return circuit
+        return circuit_before, circuit_after
+    return circuit_after
 
 
 def compute_distances_for_all_configs() -> dict[tuple, int]:
@@ -603,15 +596,11 @@ def save_crumble_urls_html(urls_dict, output_dir="crumble_urls", experiment_name
         index_html += f"    <div class='circuit'>\n"
         index_html += f"        <h3>{config_str}</h3>\n"
         
-        # Support both old format (before/after) and new format (circuit only)
-        if 'circuit' in urls and urls['circuit']:
-            index_html += f"        <p><a href='{urls['circuit']}' target='_blank'>Open in Crumble</a></p>\n"
-        else:
-            if 'before' in urls and urls['before']:
-                index_html += f"        <p class='before'>Before compactification: <a href='{urls['before']}' target='_blank'>Open in Crumble</a></p>\n"
-            
-            if 'after' in urls and urls['after']:
-                index_html += f"        <p class='after'>After compactification: <a href='{urls['after']}' target='_blank'>Open in Crumble</a></p>\n"
+        if 'before' in urls and urls['before']:
+            index_html += f"        <p class='before'>Before compactification: <a href='{urls['before']}' target='_blank'>Open in Crumble</a></p>\n"
+        
+        if 'after' in urls and urls['after']:
+            index_html += f"        <p class='after'>After compactification: <a href='{urls['after']}' target='_blank'>Open in Crumble</a></p>\n"
         
         index_html += f"    </div>\n"
     
@@ -875,7 +864,6 @@ def main():
     print("=" * 70)
     print("Generating Crumble URLs for all configurations")
     print("=" * 70)
-    print("Note: Compaction is disabled for spatial hadamard circuits")
     
     all_crumble_urls = {}
     for direction in DIRECTIONS:
@@ -885,15 +873,18 @@ def main():
                 config_str = f"direction={direction}, flags={flag_config}, k={k}"
                 
                 try:
-                    circuit = generate_circuit_for_config(config)
-                    url = circuit.to_crumble_url()
+                    circuit_before, circuit_after = generate_circuit_for_config(config, return_both=True)
+                    
+                    url_before = circuit_before.to_crumble_url()
+                    url_after = circuit_after.to_crumble_url()
                     
                     all_crumble_urls[config_str] = {
-                        'circuit': url,
+                        'before': url_before,
+                        'after': url_after,
                     }
-                    print(f"  Generated URL for {config_str}")
+                    print(f"  Generated URLs for {config_str}")
                 except Exception as e:
-                    print(f"  Error generating URL for {config_str}: {e}")
+                    print(f"  Error generating URLs for {config_str}: {e}")
     
     # Save Crumble URLs to HTML
     if all_crumble_urls:
