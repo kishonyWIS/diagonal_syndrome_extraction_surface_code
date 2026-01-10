@@ -129,24 +129,30 @@ def compile_and_generate(graph, convention_name, convention, k=1, use_diagonal=F
         manhattan_radius = 2
         
         # Generate circuit WITHOUT noise
-        circuit = compiled_graph.generate_stim_circuit(
+        circuit_before = compiled_graph.generate_stim_circuit(
             k=k, 
             manhattan_radius=manhattan_radius,
             noise_model=None
         )
         
         # Compact the circuit (ASAP + ALAP scheduling)
-        circuit = compact_and_delay_init(circuit)
+        circuit = compact_and_delay_init(circuit_before)
         print(f"✓ Successfully generated and compacted Stim circuit for k={k}")
         print(f"  Number of instructions: {len(circuit)}")
         print(f"  Number of qubits: {circuit.num_qubits}")
         print(f"  Number of detectors: {circuit.num_detectors}")
         print(f"  Number of observables: {circuit.num_observables}")
         
-        # Generate crumble URL
-        print("\nGenerating Crumble URL...")
-        crumble_url = compiled_graph.generate_crumble_url(k=k)
-        print(f"✓ Crumble URL generated")
+        # Generate crumble URLs (before and after compactification)
+        print("\nGenerating Crumble URLs...")
+        try:
+            crumble_url_before = circuit_before.to_crumble_url()
+            crumble_url_after = circuit.to_crumble_url()
+            print(f"✓ Crumble URLs generated")
+        except Exception as e:
+            print(f"✗ Error generating Crumble URLs: {e}")
+            crumble_url_before = None
+            crumble_url_after = None
         
         # Calculate graph-like distance (needs noise)
         print("\nCalculating graph-like distance...")
@@ -165,7 +171,9 @@ def compile_and_generate(graph, convention_name, convention, k=1, use_diagonal=F
         
         return {
             'circuit': circuit,
-            'crumble_url': crumble_url,
+            'circuit_before_compact': circuit_before,
+            'crumble_url_before': crumble_url_before,
+            'crumble_url_after': crumble_url_after,
             'graphlike_distance': graphlike_distance,
             'num_instructions': len(circuit),
             'num_qubits': circuit.num_qubits,
@@ -346,8 +354,105 @@ def load_error_rates_from_csv(filepath="benchmark_data/x_junction_error_rates.cs
     return all_error_rates
 
 
+def save_crumble_urls_html(urls_dict, output_dir="crumble_urls", experiment_name="x_junction"):
+    """Save Crumble URLs as HTML files with clickable links.
+    
+    Args:
+        urls_dict: Dict with structure {k: {circuit_name: {'before': url, 'after': url}}}
+        output_dir: Directory to save HTML files
+        experiment_name: Name of the experiment for the HTML title
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Create an index HTML file
+    index_html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>{experiment_name.replace('_', ' ').title()} - Crumble URLs</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 20px; }}
+        h1 {{ color: #333; }}
+        h2 {{ color: #555; margin-top: 30px; }}
+        h3 {{ color: #777; }}
+        .circuit {{ margin: 10px 0; padding: 10px; background: #f5f5f5; border-radius: 5px; }}
+        a {{ color: #0066cc; text-decoration: none; }}
+        a:hover {{ text-decoration: underline; }}
+        .before {{ color: #cc6600; }}
+        .after {{ color: #006600; }}
+    </style>
+</head>
+<body>
+    <h1>{experiment_name.replace('_', ' ').title()} - Crumble Circuit Visualizations</h1>
+"""
+    
+    for k in sorted(urls_dict.keys()):
+        index_html += f"    <h2>k = {k}</h2>\n"
+        
+        for circuit_name, urls in urls_dict[k].items():
+            index_html += f"    <div class='circuit'>\n"
+            index_html += f"        <h3>{circuit_name}</h3>\n"
+            
+            if 'before' in urls and urls['before']:
+                index_html += f"        <p class='before'>Before compactification: <a href='{urls['before']}' target='_blank'>Open in Crumble</a></p>\n"
+            
+            if 'after' in urls and urls['after']:
+                index_html += f"        <p class='after'>After compactification: <a href='{urls['after']}' target='_blank'>Open in Crumble</a></p>\n"
+            
+            index_html += f"    </div>\n"
+    
+    index_html += """</body>
+</html>
+"""
+    
+    # Save the index file
+    index_path = os.path.join(output_dir, f"{experiment_name}_crumble_urls.html")
+    with open(index_path, 'w') as f:
+        f.write(index_html)
+    
+    print(f"Saved Crumble URLs to {index_path}")
+
+
+def results_to_sinter_stats(results_data):
+    """Convert results dictionary to list of sinter.TaskStats for plotting.
+    
+    Args:
+        results_data: Dict with structure {k: {circuit_type: {noise_level: {logical_error_rate, logical_errors, shots, error_bar}}}}
+    
+    Returns:
+        List of sinter.TaskStats objects
+    """
+    stats_list = []
+    
+    for k in results_data:
+        for circuit_type in results_data[k]:
+            circuit_results = results_data[k][circuit_type]
+            if not circuit_results:
+                continue
+            
+            # Map circuit_type to display name
+            circuit_name = 'Standard' if circuit_type == 'standard' else 'Diagonal'
+            
+            for noise_level, result in circuit_results.items():
+                # Create TaskStats object
+                stats = sinter.TaskStats(
+                    strong_id=f"{circuit_type}_k{k}_p{noise_level}",
+                    decoder='pymatching',
+                    json_metadata={
+                        'p': noise_level,
+                        'k': k,
+                        'd': 2 * k + 1,  # Surface code distance
+                        'circuit': circuit_name,
+                    },
+                    shots=result['shots'],
+                    errors=result['logical_errors'],
+                )
+                stats_list.append(stats)
+    
+    return stats_list
+
+
 def plot_logical_error_rates(data_dict, save_path="benchmark_plots/x_junction_error_rates.png"):
-    """Plot logical error rates for multiple k values.
+    """Plot logical error rates using sinter.plot_error_rate (same style as benchmark_memory.py).
     
     Args:
         data_dict: Dict with structure {k_value: {circuit_type: {noise_level: results}}}
@@ -358,86 +463,59 @@ def plot_logical_error_rates(data_dict, save_path="benchmark_plots/x_junction_er
         print("Cannot create error rate plot - missing data")
         return
     
-    # Create the plot
-    plt.figure(figsize=(12, 10))
+    # Convert to sinter stats format
+    stats_list = results_to_sinter_stats(data_dict)
     
-    # Define colors for different k values
-    k_colors = {1: 'blue', 2: 'red', 3: 'green', 4: 'orange', 5: 'purple'}
+    if not stats_list:
+        print("No data to plot")
+        return
     
-    # Define line styles for different circuit types
-    circuit_styles = {
-        'standard': '--',
-        'diagonal': '-'
-    }
+    # Define colors and markers by k value
+    k_colors = {1: 'C0', 2: 'C1', 3: 'C2', 4: 'C3', 5: 'C4'}
+    k_markers = {1: 'o', 2: 's', 3: '^', 4: 'D', 5: 'v'}
     
-    # Define markers for different circuit types
-    circuit_markers = {
-        'standard': 'o',
-        'diagonal': 's'
-    }
+    # Create combined comparison plot
+    fig, ax = plt.subplots(1, 1, figsize=(12, 9))
     
-    # Determine all noise levels
-    all_noise_levels = set()
-    for k_data in data_dict.values():
-        for circuit_data in k_data.values():
-            all_noise_levels.update(circuit_data.keys())
-    noise_levels = sorted(all_noise_levels)
-    
-    # Plot for each circuit type and k value
-    for circuit_type in ['standard', 'diagonal']:
-        circuit_label = 'Standard Fixed-Bulk' if circuit_type == 'standard' else 'Diagonal Schedule'
+    # Custom plot_args_func for combined plot
+    def combined_plot_args(index, curve_id):
+        # curve_id is like "Standard k=1" or "Diagonal k=2"
+        parts = curve_id.split()
+        circuit_type = parts[0]  # "Standard" or "Diagonal"
+        k = int(parts[1].split('=')[1])  # Extract k value
         
-        for k in sorted(data_dict.keys()):
-            if circuit_type in data_dict[k]:
-                circuit_results = data_dict[k][circuit_type]
-                if not circuit_results:
-                    continue
-                    
-                # Extract data
-                rates = [circuit_results.get(nl, {}).get('logical_error_rate', None) for nl in noise_levels]
-                errors = [circuit_results.get(nl, {}).get('error_bar', 0) for nl in noise_levels]
-                
-                # Get color for this k value and style for this circuit
-                color = k_colors.get(k, 'black')
-                linestyle = circuit_styles.get(circuit_type, '-')
-                marker = circuit_markers.get(circuit_type, 'o')
-                
-                # Plot with error bars
-                plt.errorbar(
-                    noise_levels, rates, yerr=errors, 
-                    label=f'{circuit_label} (k={k})', 
-                    color=color, 
-                    linestyle=linestyle,
-                    marker=marker,
-                    capsize=3, capthick=1, linewidth=2, markersize=6,
-                    alpha=0.8
-                )
+        return {
+            'color': k_colors.get(k, 'black'),
+            'marker': k_markers.get(k, 'o'),
+            'linestyle': '--' if circuit_type == 'Standard' else '-',
+        }
     
-    # Customize the plot
-    plt.xlabel('Physical Error Rate', fontsize=12)
-    plt.ylabel('Logical Error Rate', fontsize=12)
-    plt.title('X-Junction Logical Error Rate Comparison', fontsize=14)
-    plt.legend(fontsize=10, loc='best')
-    plt.grid(True, alpha=0.3)
-    plt.yscale('log')
-    plt.xscale('log')
+    sinter.plot_error_rate(
+        ax=ax,
+        stats=stats_list,
+        x_func=lambda s: s.json_metadata['p'],
+        group_func=lambda s: f"{s.json_metadata['circuit']} k={s.json_metadata['k']}",
+        plot_args_func=combined_plot_args,
+    )
     
-    # Set axis limits
-    all_rates = []
-    for k_data in data_dict.values():
-        for circuit_data in k_data.values():
-            if circuit_data:
-                all_rates.extend([circuit_data.get(nl, {}).get('logical_error_rate', 0) for nl in noise_levels])
+    ax.loglog()
+    ax.set_xlabel("Physical Error Rate (Uniform Depolarizing)", fontsize=16)
+    ax.set_ylabel("Logical Error Rate (per Shot)", fontsize=16)
+    ax.tick_params(axis='both', which='major', labelsize=14)
+    ax.tick_params(axis='both', which='minor', labelsize=12)
+    ax.grid(which='major', alpha=0.5)
+    ax.grid(which='minor', alpha=0.2)
+    ax.legend(fontsize=14, ncol=2)
+    fig.set_dpi(150)
+    fig.tight_layout()
     
-    if all_rates:
-        min_rate = min([r for r in all_rates if r > 0])
-        max_rate = max([r for r in all_rates if r > 0])
-        plt.ylim(min_rate * 0.5, max_rate * 2)
-    
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    # Save plot
+    fig.savefig(save_path, dpi=300, bbox_inches='tight')
     print(f"\n✓ Saved error rate plot to {save_path}")
+    
     plt.close()
+    
+    return fig
 
 
 def compare_results(data_by_k, include_error_rates=False, shots=500000, noise_levels=[0.001, 0.002, 0.005]):
@@ -521,7 +599,7 @@ if __name__ == "__main__":
     parser.add_argument('--shots', type=int, default=300000000,
                        help='Number of shots for logical error rate calculation (default: 50000)')
     parser.add_argument('--noise-levels', nargs='+', type=float,
-                       default=np.logspace(-3.5, -2, 4),
+                       default=np.logspace(-3.5, -2, 7),
                        help='Physical error rates to test (default: 0.001 0.002 0.005)')
     
     args = parser.parse_args()
@@ -570,6 +648,7 @@ if __name__ == "__main__":
     
     # Compile for each k value
     all_results = {}
+    all_crumble_urls = {}
     
     for k in k_values:
         print("\n" + "=" * 60)
@@ -590,9 +669,26 @@ if __name__ == "__main__":
             'standard': standard_result,
             'diagonal': diagonal_result
         }
+        
+        # Collect Crumble URLs
+        all_crumble_urls[k] = {}
+        if standard_result:
+            all_crumble_urls[k]['Standard Fixed-Bulk'] = {
+                'before': standard_result.get('crumble_url_before'),
+                'after': standard_result.get('crumble_url_after')
+            }
+        if diagonal_result:
+            all_crumble_urls[k]['Diagonal Schedule'] = {
+                'before': diagonal_result.get('crumble_url_before'),
+                'after': diagonal_result.get('crumble_url_after')
+            }
     
     # Save circuit info to CSV
     save_circuit_info_to_csv(all_results)
+    
+    # Save Crumble URLs to HTML
+    if all_crumble_urls:
+        save_crumble_urls_html(all_crumble_urls, output_dir="crumble_urls", experiment_name="x_junction")
     
     # Compare results
     compare_results(

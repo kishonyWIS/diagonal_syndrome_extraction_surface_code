@@ -103,12 +103,11 @@ class DiagonalCubeBuilder(CubeBuilder):
                 self._generator.get_memory_qubit_plaquettes(orientation, None, z),
             )
         # else: spatial cube
-        # Spatial cube uses Z boundary basis for the spatial boundaries
-        # The x basis here is actually the temporal boundary basis
+        # Use x_basis as the spatial boundary basis (matching FixedBulkCubeBuilder)
         return self._generator.get_spatial_cube_qubit_raw_template(), (
-            self._generator.get_spatial_cube_qubit_plaquettes(Basis.Z, spec.spatial_arms, z, None),
-            self._generator.get_spatial_cube_qubit_plaquettes(Basis.Z, spec.spatial_arms, None, None),
-            self._generator.get_spatial_cube_qubit_plaquettes(Basis.Z, spec.spatial_arms, None, z),
+            self._generator.get_spatial_cube_qubit_plaquettes(x, spec.spatial_arms, z, None),
+            self._generator.get_spatial_cube_qubit_plaquettes(x, spec.spatial_arms, None, None),
+            self._generator.get_spatial_cube_qubit_plaquettes(x, spec.spatial_arms, None, z),
         )
 
     @override
@@ -217,8 +216,13 @@ def create_diagonal_convention():
     )
 
 
-def create_original_memory_circuit(k=2):
-    """Create the original memory experiment circuit (without noise, compacted)."""
+def create_original_memory_circuit(k=2, return_both=False):
+    """Create the original memory experiment circuit (without noise, compacted).
+    
+    Args:
+        k: Scale factor
+        return_both: If True, return tuple (before_compact, after_compact)
+    """
     from compact_circuit import compact_and_delay_init
     
     print("Creating original memory experiment circuit...")
@@ -230,16 +234,23 @@ def create_original_memory_circuit(k=2):
     compiled = compile_block_graph(mem_graph)
     
     # Generate stim circuit WITHOUT noise
-    circuit = compiled.generate_stim_circuit(k=k, noise_model=None)
+    circuit_before = compiled.generate_stim_circuit(k=k, noise_model=None)
     
     # Compact the circuit (ASAP + ALAP scheduling)
-    circuit = compact_and_delay_init(circuit)
+    circuit_after = compact_and_delay_init(circuit_before)
     
-    return circuit
+    if return_both:
+        return circuit_before, circuit_after
+    return circuit_after
 
 
-def create_diagonal_memory_circuit(k=2):
-    """Create the diagonal memory experiment circuit using diagonal plaquettes (without noise, compacted)."""
+def create_diagonal_memory_circuit(k=2, return_both=False):
+    """Create the diagonal memory experiment circuit using diagonal plaquettes (without noise, compacted).
+    
+    Args:
+        k: Scale factor
+        return_both: If True, return tuple (before_compact, after_compact)
+    """
     from compact_circuit import compact_and_delay_init
     
     print("Creating diagonal memory experiment circuit with diagonal plaquettes...")
@@ -254,12 +265,14 @@ def create_diagonal_memory_circuit(k=2):
     compiled = compile_block_graph(mem_graph, convention=diagonal_convention)
     
     # Generate stim circuit WITHOUT noise
-    circuit = compiled.generate_stim_circuit(k=k, noise_model=None)
+    circuit_before = compiled.generate_stim_circuit(k=k, noise_model=None)
     
     # Compact the circuit (ASAP + ALAP scheduling)
-    circuit = compact_and_delay_init(circuit)
+    circuit_after = compact_and_delay_init(circuit_before)
     
-    return circuit
+    if return_both:
+        return circuit_before, circuit_after
+    return circuit_after
 
 
 
@@ -479,7 +492,7 @@ def plot_logical_error_rates_multi_k(results_data, save_path="benchmark_plots/me
     
     ax.loglog()
     ax.set_xlabel("Physical Error Rate (Uniform Depolarizing)", fontsize=16)
-    ax.set_ylabel("Logical Error Rate per Shot", fontsize=16)
+    ax.set_ylabel("Logical Error Rate (per Shot)", fontsize=16)
     ax.tick_params(axis='both', which='major', labelsize=14)
     ax.tick_params(axis='both', which='minor', labelsize=12)
     ax.grid(which='major', alpha=0.5)
@@ -647,6 +660,65 @@ def generate_crumble_url(circuit, name):
         return None
 
 
+def save_crumble_urls_html(urls_dict, output_dir="crumble_urls", experiment_name="memory"):
+    """Save Crumble URLs as HTML files with clickable links.
+    
+    Args:
+        urls_dict: Dict with structure {k: {circuit_name: {'before': url, 'after': url}}}
+        output_dir: Directory to save HTML files
+        experiment_name: Name of the experiment for the HTML title
+    """
+    import os
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Create an index HTML file
+    index_html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <title>{experiment_name.title()} Experiment - Crumble URLs</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 20px; }}
+        h1 {{ color: #333; }}
+        h2 {{ color: #555; margin-top: 30px; }}
+        h3 {{ color: #777; }}
+        .circuit {{ margin: 10px 0; padding: 10px; background: #f5f5f5; border-radius: 5px; }}
+        a {{ color: #0066cc; text-decoration: none; }}
+        a:hover {{ text-decoration: underline; }}
+        .before {{ color: #cc6600; }}
+        .after {{ color: #006600; }}
+    </style>
+</head>
+<body>
+    <h1>{experiment_name.title()} Experiment - Crumble Circuit Visualizations</h1>
+"""
+    
+    for k in sorted(urls_dict.keys()):
+        index_html += f"    <h2>k = {k} (distance = {2*k+1})</h2>\n"
+        
+        for circuit_name, urls in urls_dict[k].items():
+            index_html += f"    <div class='circuit'>\n"
+            index_html += f"        <h3>{circuit_name}</h3>\n"
+            
+            if 'before' in urls and urls['before']:
+                index_html += f"        <p class='before'>Before compactification: <a href='{urls['before']}' target='_blank'>Open in Crumble</a></p>\n"
+            
+            if 'after' in urls and urls['after']:
+                index_html += f"        <p class='after'>After compactification: <a href='{urls['after']}' target='_blank'>Open in Crumble</a></p>\n"
+            
+            index_html += f"    </div>\n"
+    
+    index_html += """</body>
+</html>
+"""
+    
+    # Save the index file
+    index_path = os.path.join(output_dir, f"{experiment_name}_crumble_urls.html")
+    with open(index_path, 'w') as f:
+        f.write(index_html)
+    
+    print(f"Saved Crumble URLs to {index_path}")
+
+
 def main():
     """Main comparison function for original vs diagonal circuits."""
     # Parse command line arguments
@@ -734,16 +806,22 @@ def main():
         distance = 2 * k + 1
         print(f"=== Testing k={k} (surface code distance={distance}) ===")
         
-        # Create circuits
+        # Create circuits (with both before and after compactification)
         print("Creating circuits...")
-        original_circuit = create_original_memory_circuit(k)
-        diagonal_circuit = create_diagonal_memory_circuit(k)
+        original_before, original_circuit = create_original_memory_circuit(k, return_both=True)
+        diagonal_before, diagonal_circuit = create_diagonal_memory_circuit(k, return_both=True)
         print()
         
-        # Store circuit info
+        # Store circuit info (use compacted versions for simulation)
         circuits = {
             'Original Circuit': original_circuit,
             'Diagonal Circuit': diagonal_circuit
+        }
+        
+        # Store both versions for Crumble URLs
+        circuits_both = {
+            'Original Circuit': {'before': original_before, 'after': original_circuit},
+            'Diagonal Circuit': {'before': diagonal_before, 'after': diagonal_circuit}
         }
         
         print(f"Circuit sizes for k={k}:")
@@ -755,10 +833,14 @@ def main():
         if not args.skip_crumble:
             print("Generating Crumble URLs...")
             k_urls = {}
-            for name, circuit in circuits.items():
-                url = generate_crumble_url(circuit, f"{name} k={k}")
-                k_urls[name] = url
-                print(f"  {name}: {url}")
+            for name, circuit_versions in circuits_both.items():
+                k_urls[name] = {}
+                # Before compactification
+                url_before = generate_crumble_url(circuit_versions['before'], f"{name} k={k} (before compact)")
+                k_urls[name]['before'] = url_before
+                # After compactification
+                url_after = generate_crumble_url(circuit_versions['after'], f"{name} k={k} (after compact)")
+                k_urls[name]['after'] = url_after
             all_crumble_urls[k] = k_urls
             print()
         
@@ -865,15 +947,20 @@ def main():
                         print(f"  {circuit_name}: Error calculating distance")
             print()
     
-    # Crumble URLs summary (optional)
+    # Crumble URLs summary and HTML save (optional)
     if not args.skip_crumble and all_crumble_urls:
         print("Crumble URLs for circuit visualization:")
         for k in k_values:
             print(f"k={k}:")
             if k in all_crumble_urls:
-                for circuit_name, url in all_crumble_urls[k].items():
-                    print(f"  {circuit_name}: {url}")
+                for circuit_name, urls in all_crumble_urls[k].items():
+                    print(f"  {circuit_name}:")
+                    print(f"    Before compact: {urls.get('before', 'N/A')}")
+                    print(f"    After compact: {urls.get('after', 'N/A')}")
             print()
+        
+        # Save Crumble URLs to HTML file
+        save_crumble_urls_html(all_crumble_urls, output_dir="crumble_urls", experiment_name="memory")
     
 if __name__ == "__main__":
     main()
