@@ -880,7 +880,7 @@ def main():
                     
                     all_crumble_urls[config_str] = {
                         'before': url_before,
-                        'after': url_after,
+                        'after': url_after
                     }
                     print(f"  Generated URLs for {config_str}")
                 except Exception as e:
@@ -890,9 +890,9 @@ def main():
     if all_crumble_urls:
         save_crumble_urls_html(all_crumble_urls, output_dir="crumble_urls", experiment_name="spatial_hadamard")
     
-    # Run benchmark (skip distance calculation - already verified)
+    # Run benchmark with distance calculation enabled
     # Results are saved incrementally to CSV after each configuration
-    results = run_benchmark(skip_distance=True)
+    results = run_benchmark(skip_distance=False)
     
     # Print summary
     print_summary(results)
