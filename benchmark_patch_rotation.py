@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
 """
-Comprehensive benchmarking script for Patch Rotation circuits.
+Benchmarking script for Patch Rotation circuits.
 
-Sweeps through circuit configurations and decoder types, computing:
+Sweeps through circuit configurations, computing:
 - Graph-like distance for each k value
-- Logical error rates for each configuration with multiple decoders
+- Logical error rates using pymatching decoder
 
 Uses sinter for parallelized sampling and decoding.
 
 Parameters swept:
 - k: 1, 2, 3
 - Physical error rate: np.logspace(-3.5, -2, 7)
-- Decoder: plain pymatching, correlated pymatching, tesseract
 """
 
 import argparse
@@ -23,10 +22,8 @@ from dataclasses import dataclass
 from typing import Optional
 import numpy as np
 import matplotlib.pyplot as plt
-import pymatching
 import stim
 import sinter
-import tesseract_decoder.tesseract as tesseract
 
 # Force unbuffered output
 sys.stdout.reconfigure(line_buffering=True)
@@ -46,7 +43,6 @@ from tqec import NoiseModel
 # Parameter ranges
 K_VALUES = [1, 2, 3]
 PHYSICAL_ERROR_RATES = np.logspace(-3.5, -2, 7)  # ~[0.000316, 0.001, 0.00316, 0.01]
-DECODERS = ['pymatching', 'correlated_pymatching', 'tesseract']
 
 # Sampling configuration
 MAX_SHOTS = 100_000_000
@@ -56,111 +52,6 @@ RANDOM_SEED = 42
 
 # Output file
 OUTPUT_CSV = 'benchmark_data/patch_rotation_benchmark.csv'
-
-
-# =============================================================================
-# Custom Sinter Decoders
-# =============================================================================
-
-class CorrelatedPymatchingDecoder(sinter.Decoder):
-    """Sinter decoder wrapper for correlated PyMatching."""
-    
-    def decode_via_files(
-        self,
-        *,
-        num_shots: int,
-        num_dets: int,
-        num_obs: int,
-        dem_path: str,
-        dets_b8_in_path: str,
-        obs_predictions_b8_out_path: str,
-        tmp_dir: str,
-    ) -> None:
-        """Decode using file-based interface."""
-        import pathlib
-        
-        # Load DEM
-        dem = stim.DetectorErrorModel.from_file(dem_path)
-        
-        # Create matcher with correlations enabled
-        matcher = pymatching.Matching.from_detector_error_model(dem, enable_correlations=True)
-        
-        # Load detector data
-        dets = stim.read_shot_data_file(
-            path=dets_b8_in_path,
-            format='b8',
-            num_detectors=num_dets,
-            num_observables=0,
-        )
-        
-        # Decode with correlations enabled
-        predictions = matcher.decode_batch(dets, enable_correlations=True)
-        
-        # Write predictions
-        stim.write_shot_data_file(
-            data=predictions,
-            path=obs_predictions_b8_out_path,
-            format='b8',
-            num_observables=num_obs,
-        )
-
-
-class TesseractDecoder(sinter.Decoder):
-    """Sinter decoder wrapper for Tesseract hypergraph decoder."""
-    
-    def decode_via_files(
-        self,
-        *,
-        num_shots: int,
-        num_dets: int,
-        num_obs: int,
-        dem_path: str,
-        dets_b8_in_path: str,
-        obs_predictions_b8_out_path: str,
-        tmp_dir: str,
-    ) -> None:
-        """Decode using file-based interface."""
-        import pathlib
-        
-        # Load DEM (full, not decomposed)
-        dem = stim.DetectorErrorModel.from_file(dem_path)
-        
-        # Create tesseract decoder
-        tesseract_config = tesseract.TesseractConfig(
-            dem=dem,
-            pqlimit=200_000,
-            det_beam=15,
-            beam_climbing=True,
-            det_orders=[],
-            no_revisit_dets=True,
-        )
-        decoder = tesseract.TesseractDecoder(tesseract_config)
-        
-        # Load detector data
-        dets = stim.read_shot_data_file(
-            path=dets_b8_in_path,
-            format='b8',
-            num_detectors=num_dets,
-            num_observables=0,
-        )
-        
-        # Decode
-        predictions = decoder.decode_batch(dets)
-        
-        # Write predictions
-        stim.write_shot_data_file(
-            data=predictions,
-            path=obs_predictions_b8_out_path,
-            format='b8',
-            num_observables=num_obs,
-        )
-
-
-# Custom decoder registry for sinter
-CUSTOM_DECODERS = {
-    'correlated_pymatching': CorrelatedPymatchingDecoder(),
-    'tesseract': TesseractDecoder(),
-}
 
 
 # =============================================================================
@@ -185,7 +76,6 @@ class BenchmarkResult:
     
     # Error rate configuration
     physical_error_rate: float
-    decoder: str
     
     # Results
     logical_error_rate: float
@@ -254,18 +144,16 @@ def compute_distances_for_all_configs() -> dict[int, int]:
 def run_sinter_for_single_task(
     circuit: stim.Circuit,
     metadata: dict,
-    decoder_name: str,
     max_shots: int,
     max_errors: int,
     num_workers: int,
 ) -> BenchmarkResult:
     """
-    Run sinter benchmark for a single circuit + decoder combination.
+    Run sinter benchmark for a single circuit.
     
     Args:
         circuit: The stim circuit to benchmark
         metadata: Dictionary with configuration metadata
-        decoder_name: Name of the decoder to use
         max_shots: Maximum shots per task
         max_errors: Maximum errors for early stopping
         num_workers: Number of parallel workers
@@ -275,18 +163,17 @@ def run_sinter_for_single_task(
     """
     task = sinter.Task(
         circuit=circuit,
-        decoder=decoder_name,
-        json_metadata={**metadata, 'decoder': decoder_name},
+        decoder='pymatching',
+        json_metadata=metadata,
     )
     
-    # Run sinter for this decoder
+    # Run sinter
     start_time = time.time()
     stats = sinter.collect(
         tasks=[task],
         max_shots=max_shots,
         max_errors=max_errors,
         num_workers=num_workers,
-        custom_decoders=CUSTOM_DECODERS,
     )
     decode_time = time.time() - start_time
     
@@ -305,7 +192,6 @@ def run_sinter_for_single_task(
             k=metadata['k'],
             distance=metadata.get('distance'),
             physical_error_rate=metadata['physical_error_rate'],
-            decoder=decoder_name,
             logical_error_rate=error_rate,
             errors=stat.errors,
             shots=stat.shots,
@@ -313,7 +199,7 @@ def run_sinter_for_single_task(
             decode_time=decode_time,
         )
         
-        print(f"      {stat.errors}/{stat.shots} errors, rate={error_rate:.6f}, time={decode_time:.1f}s")
+        print(f"    {stat.errors}/{stat.shots} errors, rate={error_rate:.6f}, time={decode_time:.1f}s")
         return result
     
     return None
@@ -327,7 +213,6 @@ def append_results_to_csv(results: list[BenchmarkResult], filepath: str, write_h
         'k',
         'distance',
         'physical_error_rate',
-        'decoder',
         'logical_error_rate',
         'errors',
         'shots',
@@ -346,7 +231,6 @@ def append_results_to_csv(results: list[BenchmarkResult], filepath: str, write_h
                 'k': result.k,
                 'distance': result.distance,
                 'physical_error_rate': result.physical_error_rate,
-                'decoder': result.decoder,
                 'logical_error_rate': result.logical_error_rate,
                 'errors': result.errors,
                 'shots': result.shots,
@@ -365,9 +249,8 @@ def run_benchmark(skip_distance: bool = True) -> list[BenchmarkResult]:
     One configuration at a time, saving to CSV after each.
     
     Loop order (outer to inner):
-    1. decoder
-    2. k
-    3. physical_error_rate
+    1. k
+    2. physical_error_rate
     
     Args:
         skip_distance: If True, skip distance calculation (use None for distance values)
@@ -385,13 +268,13 @@ def run_benchmark(skip_distance: bool = True) -> list[BenchmarkResult]:
         distances = compute_distances_for_all_configs()
     
     # Count total configurations
-    total_tasks = len(DECODERS) * len(K_VALUES) * len(PHYSICAL_ERROR_RATES)
+    total_tasks = len(K_VALUES) * len(PHYSICAL_ERROR_RATES)
     
     print("\n" + "=" * 70)
     print("Running Logical Error Rate Benchmarks with Sinter")
     print("=" * 70)
     print(f"Total tasks: {total_tasks}")
-    print(f"Loop order: decoder -> k -> noise")
+    print(f"Decoder: pymatching")
     print(f"Max shots per config: {MAX_SHOTS:,}")
     print(f"Max errors for early stopping: {MAX_ERRORS:,}")
     print(f"Number of workers: {NUM_WORKERS}")
@@ -403,55 +286,48 @@ def run_benchmark(skip_distance: bool = True) -> list[BenchmarkResult]:
     
     current_task = 0
     
-    # Loop order: decoder -> k -> noise
-    for decoder_name in DECODERS:
-        print(f"\n{'='*70}")
-        print(f"DECODER: {decoder_name}")
-        print(f"{'='*70}")
+    for k in K_VALUES:
+        print(f"\nk={k}")
         
-        for k in K_VALUES:
-            print(f"\n  k={k}")
+        for noise_level in PHYSICAL_ERROR_RATES:
+            current_task += 1
+            config = CircuitConfig(k)
+            distance = distances.get(k)
             
-            for noise_level in PHYSICAL_ERROR_RATES:
-                current_task += 1
-                config = CircuitConfig(k)
-                distance = distances.get(k)
+            print(f"  [{current_task}/{total_tasks}] p={noise_level:.6f}")
+            
+            # Generate circuit (without noise)
+            circuit = generate_circuit_for_config(config)
+            
+            # Add noise using NoiseModel.noisy_circuit()
+            noise_model = NoiseModel.uniform_depolarizing(noise_level)
+            noisy_circuit = noise_model.noisy_circuit(circuit)
+            
+            metadata = {
+                'k': k,
+                'distance': distance,
+                'physical_error_rate': noise_level,
+            }
+            
+            # Run benchmark
+            try:
+                result = run_sinter_for_single_task(
+                    circuit=noisy_circuit,
+                    metadata=metadata,
+                    max_shots=MAX_SHOTS,
+                    max_errors=MAX_ERRORS,
+                    num_workers=NUM_WORKERS,
+                )
                 
-                print(f"    [{current_task}/{total_tasks}] {config}, p={noise_level:.6f}")
+                if result:
+                    # Save result immediately
+                    append_results_to_csv([result], OUTPUT_CSV, write_header=False)
+                    all_results.append(result)
                 
-                # Generate circuit (without noise)
-                circuit = generate_circuit_for_config(config)
-                
-                # Add noise using NoiseModel.noisy_circuit()
-                noise_model = NoiseModel.uniform_depolarizing(noise_level)
-                noisy_circuit = noise_model.noisy_circuit(circuit)
-                
-                metadata = {
-                    'k': k,
-                    'distance': distance,
-                    'physical_error_rate': noise_level,
-                }
-                
-                # Run this decoder for this configuration
-                try:
-                    result = run_sinter_for_single_task(
-                        circuit=noisy_circuit,
-                        metadata=metadata,
-                        decoder_name=decoder_name,
-                        max_shots=MAX_SHOTS,
-                        max_errors=MAX_ERRORS,
-                        num_workers=NUM_WORKERS,
-                    )
-                    
-                    if result:
-                        # Save result immediately
-                        append_results_to_csv([result], OUTPUT_CSV, write_header=False)
-                        all_results.append(result)
-                    
-                except Exception as e:
-                    print(f"      ERROR: {e}")
-                    import traceback
-                    traceback.print_exc()
+            except Exception as e:
+                print(f"    ERROR: {e}")
+                import traceback
+                traceback.print_exc()
     
     return all_results
 
@@ -468,7 +344,6 @@ def save_results_to_csv(results: list[BenchmarkResult], filepath: str) -> None:
         'k',
         'distance',
         'physical_error_rate',
-        'decoder',
         'logical_error_rate',
         'errors',
         'shots',
@@ -485,7 +360,6 @@ def save_results_to_csv(results: list[BenchmarkResult], filepath: str) -> None:
                 'k': result.k,
                 'distance': result.distance,
                 'physical_error_rate': result.physical_error_rate,
-                'decoder': result.decoder,
                 'logical_error_rate': result.logical_error_rate,
                 'errors': result.errors,
                 'shots': result.shots,
@@ -523,95 +397,38 @@ def plot_results(results: list[BenchmarkResult], output_dir: str = 'benchmark_pl
     """Generate plots from benchmark results."""
     os.makedirs(output_dir, exist_ok=True)
     
-    # Create figure with subplots for each decoder
-    fig, axes = plt.subplots(1, len(DECODERS), figsize=(5*len(DECODERS), 5), sharey=True)
-    if len(DECODERS) == 1:
-        axes = [axes]
-    
     colors = plt.cm.viridis(np.linspace(0, 0.8, len(K_VALUES)))
     
-    for ax, decoder in zip(axes, DECODERS):
-        ax.set_title(f'{decoder}')
-        ax.set_xlabel('Physical Error Rate')
-        ax.set_ylabel('Logical Error Rate')
-        ax.set_xscale('log')
-        ax.set_yscale('log')
+    fig, ax = plt.subplots(figsize=(8, 6))
+    ax.set_title('Patch Rotation Benchmark (pymatching)')
+    ax.set_xlabel('Physical Error Rate')
+    ax.set_ylabel('Logical Error Rate')
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+    
+    for k, color in zip(K_VALUES, colors):
+        # Filter results for this k
+        filtered = [r for r in results if r.k == k]
         
-        for k, color in zip(K_VALUES, colors):
-            # Filter results for this decoder and k
-            filtered = [r for r in results 
-                       if r.decoder == decoder and r.k == k]
-            
-            if not filtered:
-                continue
-            
-            # Sort by physical error rate
-            filtered.sort(key=lambda r: r.physical_error_rate)
-            
-            x = [r.physical_error_rate for r in filtered]
-            y = [r.logical_error_rate for r in filtered]
-            yerr = [r.error_bar for r in filtered]
-            
-            distance = filtered[0].distance if filtered[0].distance else f"d={2*k+1}"
-            ax.errorbar(x, y, yerr=yerr, marker='o', label=f'k={k} ({distance})',
-                       color=color, capsize=3)
+        if not filtered:
+            continue
         
-        ax.legend()
-        ax.grid(True, alpha=0.3)
+        # Sort by physical error rate
+        filtered.sort(key=lambda r: r.physical_error_rate)
+        
+        x = [r.physical_error_rate for r in filtered]
+        y = [r.logical_error_rate for r in filtered]
+        yerr = [r.error_bar for r in filtered]
+        
+        distance = filtered[0].distance if filtered[0].distance else 2*k+1
+        ax.errorbar(x, y, yerr=yerr, marker='o', label=f'k={k} (d={distance})',
+                   color=color, capsize=3)
+    
+    ax.legend()
+    ax.grid(True, alpha=0.3)
     
     plt.tight_layout()
     plot_path = os.path.join(output_dir, 'patch_rotation_benchmark.png')
-    plt.savefig(plot_path, dpi=150)
-    print(f"Saved plot to {plot_path}")
-    plt.close()
-    
-    # Also create a combined plot showing all decoders together for each k
-    fig, axes = plt.subplots(1, len(K_VALUES), figsize=(5*len(K_VALUES), 5), sharey=True)
-    if len(K_VALUES) == 1:
-        axes = [axes]
-    
-    decoder_colors = {'pymatching': 'blue', 'correlated_pymatching': 'green', 'tesseract': 'red'}
-    decoder_markers = {'pymatching': 'o', 'correlated_pymatching': 's', 'tesseract': '^'}
-    
-    for ax, k in zip(axes, K_VALUES):
-        distance = None
-        for r in results:
-            if r.k == k and r.distance:
-                distance = r.distance
-                break
-        
-        ax.set_title(f'k={k} (d={distance or 2*k+1})')
-        ax.set_xlabel('Physical Error Rate')
-        ax.set_ylabel('Logical Error Rate')
-        ax.set_xscale('log')
-        ax.set_yscale('log')
-        
-        for decoder in DECODERS:
-            # Filter results
-            filtered = [r for r in results 
-                       if r.decoder == decoder and r.k == k]
-            
-            if not filtered:
-                continue
-            
-            # Sort by physical error rate
-            filtered.sort(key=lambda r: r.physical_error_rate)
-            
-            x = [r.physical_error_rate for r in filtered]
-            y = [r.logical_error_rate for r in filtered]
-            yerr = [r.error_bar for r in filtered]
-            
-            ax.errorbar(x, y, yerr=yerr, 
-                       marker=decoder_markers.get(decoder, 'o'),
-                       label=decoder,
-                       color=decoder_colors.get(decoder, 'black'),
-                       capsize=3)
-        
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-    
-    plt.tight_layout()
-    plot_path = os.path.join(output_dir, 'patch_rotation_by_k.png')
     plt.savefig(plot_path, dpi=150)
     print(f"Saved plot to {plot_path}")
     plt.close()
@@ -627,18 +444,14 @@ def print_summary(results: list[BenchmarkResult]) -> None:
     print("Benchmark Summary")
     print("=" * 70)
     
-    # Group by decoder
-    for decoder in DECODERS:
-        print(f"\n{decoder}:")
-        print(f"  {'k':<5} {'Distance':<10} {'p_phys':<12} {'p_log':<12} {'Errors':<10} {'Shots':<12}")
-        print("  " + "-" * 65)
-        
-        decoder_results = [r for r in results if r.decoder == decoder]
-        decoder_results.sort(key=lambda r: (r.k, r.physical_error_rate))
-        
-        for r in decoder_results:
-            print(f"  {r.k:<5} {r.distance or 'N/A':<10} {r.physical_error_rate:<12.6f} "
-                  f"{r.logical_error_rate:<12.6f} {r.errors:<10} {r.shots:<12}")
+    print(f"\n{'k':<5} {'Distance':<10} {'p_phys':<12} {'p_log':<12} {'Errors':<10} {'Shots':<12}")
+    print("-" * 65)
+    
+    sorted_results = sorted(results, key=lambda r: (r.k, r.physical_error_rate))
+    
+    for r in sorted_results:
+        print(f"{r.k:<5} {r.distance or 'N/A':<10} {r.physical_error_rate:<12.6f} "
+              f"{r.logical_error_rate:<12.6f} {r.errors:<10} {r.shots:<12}")
 
 
 # =============================================================================
@@ -744,7 +557,6 @@ def main():
                 k=r['k'],
                 distance=r['distance'],
                 physical_error_rate=r['physical_error_rate'],
-                decoder=r['decoder'],
                 logical_error_rate=r['logical_error_rate'],
                 errors=r['errors'],
                 shots=r['shots'],
@@ -765,7 +577,7 @@ def main():
     print("Configuration:")
     print(f"  k values: {K_VALUES}")
     print(f"  Physical error rates: {[f'{p:.6f}' for p in PHYSICAL_ERROR_RATES]}")
-    print(f"  Decoders: {DECODERS}")
+    print(f"  Decoder: pymatching")
     print(f"  Max shots: {MAX_SHOTS:,}")
     print(f"  Max errors: {MAX_ERRORS:,}")
     print(f"  Num workers: {NUM_WORKERS}")
