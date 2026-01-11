@@ -3,13 +3,14 @@
 Benchmarking script for Patch Rotation circuits.
 
 Sweeps through circuit configurations, computing:
-- Graph-like distance for each k value
+- Graph-like distance for each configuration
 - Logical error rates using pymatching decoder
 
 Uses sinter for parallelized sampling and decoding.
 
 Parameters swept:
 - k: 1, 2, 3
+- basis: 'z', 'x' (logical qubit init/measure basis)
 - Physical error rate: np.logspace(-3.5, -2, 7)
 """
 
@@ -42,6 +43,7 @@ from tqec import NoiseModel
 
 # Parameter ranges
 K_VALUES = [1, 2, 3]
+BASIS_VALUES = ['z', 'x']  # Logical qubit init/measure basis
 PHYSICAL_ERROR_RATES = np.logspace(-3.5, -2, 7)  # ~[0.000316, 0.001, 0.00316, 0.01]
 
 # Sampling configuration
@@ -62,9 +64,10 @@ OUTPUT_CSV = 'benchmark_data/patch_rotation_benchmark.csv'
 class CircuitConfig:
     """Configuration for a single circuit variant."""
     k: int
+    basis: str  # 'z' or 'x'
     
     def __str__(self):
-        return f"k={self.k}"
+        return f"k={self.k}, basis={self.basis}"
 
 
 @dataclass
@@ -72,6 +75,7 @@ class BenchmarkResult:
     """Result of a single benchmark run."""
     # Circuit configuration
     k: int
+    basis: str
     distance: Optional[int]
     
     # Error rate configuration
@@ -98,15 +102,15 @@ def generate_circuit_for_config(config: CircuitConfig) -> stim.Circuit:
     Returns:
         The circuit (without noise)
     """
-    return generate_patch_rotation_circuit(k=config.k, manhattan_radius=2)
+    return generate_patch_rotation_circuit(k=config.k, manhattan_radius=2, basis=config.basis)
 
 
-def compute_distances_for_all_configs() -> dict[int, int]:
+def compute_distances_for_all_configs() -> dict[tuple[int, str], int]:
     """
     Compute graph-like distance for all circuit configurations.
     
     Returns:
-        Dictionary mapping k to distance
+        Dictionary mapping (k, basis) to distance
     """
     print("=" * 70)
     print("Computing Graph-like Distances")
@@ -114,25 +118,26 @@ def compute_distances_for_all_configs() -> dict[int, int]:
     
     distances = {}
     
-    for k in K_VALUES:
-        config = CircuitConfig(k)
-        print(f"\nComputing distance for {config}")
-        
-        # Use the compute_graphlike_distance function from patch_rotation_manual
-        distance = compute_graphlike_distance(k)
-        distances[k] = distance
-        
-        print(f"  Graph-like distance: {distance} (expected: {2*k+1})")
+    for basis in BASIS_VALUES:
+        for k in K_VALUES:
+            config = CircuitConfig(k, basis)
+            print(f"\nComputing distance for {config}")
+            
+            # Use the compute_graphlike_distance function from patch_rotation_manual
+            distance = compute_graphlike_distance(k, basis=basis)
+            distances[(k, basis)] = distance
+            
+            print(f"  Graph-like distance: {distance} (expected: {2*k+1})")
     
     print("\n" + "=" * 70)
     print("Distance Summary")
     print("=" * 70)
-    print(f"{'k':<5} {'Distance':<10} {'Expected':<10}")
-    print("-" * 30)
-    for k, distance in sorted(distances.items()):
+    print(f"{'k':<5} {'Basis':<8} {'Distance':<10} {'Expected':<10}")
+    print("-" * 40)
+    for (k, basis), distance in sorted(distances.items()):
         expected = 2 * k + 1
         match = "✓" if distance == expected else "✗"
-        print(f"{k:<5} {distance:<10} {expected:<10} {match}")
+        print(f"{k:<5} {basis:<8} {distance:<10} {expected:<10} {match}")
     
     return distances
 
@@ -190,6 +195,7 @@ def run_sinter_for_single_task(
         
         result = BenchmarkResult(
             k=metadata['k'],
+            basis=metadata['basis'],
             distance=metadata.get('distance'),
             physical_error_rate=metadata['physical_error_rate'],
             logical_error_rate=error_rate,
@@ -211,6 +217,7 @@ def append_results_to_csv(results: list[BenchmarkResult], filepath: str, write_h
     
     fieldnames = [
         'k',
+        'basis',
         'distance',
         'physical_error_rate',
         'logical_error_rate',
@@ -229,6 +236,7 @@ def append_results_to_csv(results: list[BenchmarkResult], filepath: str, write_h
         for result in results:
             writer.writerow({
                 'k': result.k,
+                'basis': result.basis,
                 'distance': result.distance,
                 'physical_error_rate': result.physical_error_rate,
                 'logical_error_rate': result.logical_error_rate,
@@ -249,8 +257,9 @@ def run_benchmark(skip_distance: bool = True) -> list[BenchmarkResult]:
     One configuration at a time, saving to CSV after each.
     
     Loop order (outer to inner):
-    1. k
-    2. physical_error_rate
+    1. basis
+    2. k
+    3. physical_error_rate
     
     Args:
         skip_distance: If True, skip distance calculation (use None for distance values)
@@ -268,7 +277,7 @@ def run_benchmark(skip_distance: bool = True) -> list[BenchmarkResult]:
         distances = compute_distances_for_all_configs()
     
     # Count total configurations
-    total_tasks = len(K_VALUES) * len(PHYSICAL_ERROR_RATES)
+    total_tasks = len(BASIS_VALUES) * len(K_VALUES) * len(PHYSICAL_ERROR_RATES)
     
     print("\n" + "=" * 70)
     print("Running Logical Error Rate Benchmarks with Sinter")
@@ -286,48 +295,54 @@ def run_benchmark(skip_distance: bool = True) -> list[BenchmarkResult]:
     
     current_task = 0
     
-    for k in K_VALUES:
-        print(f"\nk={k}")
+    for basis in BASIS_VALUES:
+        print(f"\n{'='*70}")
+        print(f"BASIS: {basis}")
+        print(f"{'='*70}")
         
-        for noise_level in PHYSICAL_ERROR_RATES:
-            current_task += 1
-            config = CircuitConfig(k)
-            distance = distances.get(k)
+        for k in K_VALUES:
+            print(f"\n  k={k}")
             
-            print(f"  [{current_task}/{total_tasks}] p={noise_level:.6f}")
-            
-            # Generate circuit (without noise)
-            circuit = generate_circuit_for_config(config)
-            
-            # Add noise using NoiseModel.noisy_circuit()
-            noise_model = NoiseModel.uniform_depolarizing(noise_level)
-            noisy_circuit = noise_model.noisy_circuit(circuit)
-            
-            metadata = {
-                'k': k,
-                'distance': distance,
-                'physical_error_rate': noise_level,
-            }
-            
-            # Run benchmark
-            try:
-                result = run_sinter_for_single_task(
-                    circuit=noisy_circuit,
-                    metadata=metadata,
-                    max_shots=MAX_SHOTS,
-                    max_errors=MAX_ERRORS,
-                    num_workers=NUM_WORKERS,
-                )
+            for noise_level in PHYSICAL_ERROR_RATES:
+                current_task += 1
+                config = CircuitConfig(k, basis)
+                distance = distances.get((k, basis))
                 
-                if result:
-                    # Save result immediately
-                    append_results_to_csv([result], OUTPUT_CSV, write_header=False)
-                    all_results.append(result)
+                print(f"    [{current_task}/{total_tasks}] p={noise_level:.6f}")
                 
-            except Exception as e:
-                print(f"    ERROR: {e}")
-                import traceback
-                traceback.print_exc()
+                # Generate circuit (without noise)
+                circuit = generate_circuit_for_config(config)
+                
+                # Add noise using NoiseModel.noisy_circuit()
+                noise_model = NoiseModel.uniform_depolarizing(noise_level)
+                noisy_circuit = noise_model.noisy_circuit(circuit)
+                
+                metadata = {
+                    'k': k,
+                    'basis': basis,
+                    'distance': distance,
+                    'physical_error_rate': noise_level,
+                }
+                
+                # Run benchmark
+                try:
+                    result = run_sinter_for_single_task(
+                        circuit=noisy_circuit,
+                        metadata=metadata,
+                        max_shots=MAX_SHOTS,
+                        max_errors=MAX_ERRORS,
+                        num_workers=NUM_WORKERS,
+                    )
+                    
+                    if result:
+                        # Save result immediately
+                        append_results_to_csv([result], OUTPUT_CSV, write_header=False)
+                        all_results.append(result)
+                    
+                except Exception as e:
+                    print(f"      ERROR: {e}")
+                    import traceback
+                    traceback.print_exc()
     
     return all_results
 
@@ -342,6 +357,7 @@ def save_results_to_csv(results: list[BenchmarkResult], filepath: str) -> None:
     
     fieldnames = [
         'k',
+        'basis',
         'distance',
         'physical_error_rate',
         'logical_error_rate',
@@ -358,6 +374,7 @@ def save_results_to_csv(results: list[BenchmarkResult], filepath: str) -> None:
         for result in results:
             writer.writerow({
                 'k': result.k,
+                'basis': result.basis,
                 'distance': result.distance,
                 'physical_error_rate': result.physical_error_rate,
                 'logical_error_rate': result.logical_error_rate,
@@ -378,6 +395,7 @@ def load_results_from_csv(filepath: str) -> list[dict]:
         for row in reader:
             # Convert types
             row['k'] = int(row['k'])
+            row['basis'] = row['basis']
             row['distance'] = int(row['distance']) if row['distance'] else None
             row['physical_error_rate'] = float(row['physical_error_rate'])
             row['logical_error_rate'] = float(row['logical_error_rate'])
@@ -398,31 +416,37 @@ def plot_results(results: list[BenchmarkResult], output_dir: str = 'benchmark_pl
     os.makedirs(output_dir, exist_ok=True)
     
     colors = plt.cm.viridis(np.linspace(0, 0.8, len(K_VALUES)))
+    linestyles = {'z': '-', 'x': '--'}
+    markers = {'z': 'o', 'x': 's'}
     
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=(10, 7))
     ax.set_title('Patch Rotation Benchmark (pymatching)')
     ax.set_xlabel('Physical Error Rate')
     ax.set_ylabel('Logical Error Rate')
     ax.set_xscale('log')
     ax.set_yscale('log')
     
-    for k, color in zip(K_VALUES, colors):
-        # Filter results for this k
-        filtered = [r for r in results if r.k == k]
-        
-        if not filtered:
-            continue
-        
-        # Sort by physical error rate
-        filtered.sort(key=lambda r: r.physical_error_rate)
-        
-        x = [r.physical_error_rate for r in filtered]
-        y = [r.logical_error_rate for r in filtered]
-        yerr = [r.error_bar for r in filtered]
-        
-        distance = filtered[0].distance if filtered[0].distance else 2*k+1
-        ax.errorbar(x, y, yerr=yerr, marker='o', label=f'k={k} (d={distance})',
-                   color=color, capsize=3)
+    for basis in BASIS_VALUES:
+        for k, color in zip(K_VALUES, colors):
+            # Filter results for this k and basis
+            filtered = [r for r in results if r.k == k and r.basis == basis]
+            
+            if not filtered:
+                continue
+            
+            # Sort by physical error rate
+            filtered.sort(key=lambda r: r.physical_error_rate)
+            
+            x = [r.physical_error_rate for r in filtered]
+            y = [r.logical_error_rate for r in filtered]
+            yerr = [r.error_bar for r in filtered]
+            
+            distance = filtered[0].distance if filtered[0].distance else 2*k+1
+            ax.errorbar(x, y, yerr=yerr, 
+                       marker=markers[basis],
+                       linestyle=linestyles[basis],
+                       label=f'k={k}, basis={basis} (d={distance})',
+                       color=color, capsize=3)
     
     ax.legend()
     ax.grid(True, alpha=0.3)
@@ -444,14 +468,19 @@ def print_summary(results: list[BenchmarkResult]) -> None:
     print("Benchmark Summary")
     print("=" * 70)
     
-    print(f"\n{'k':<5} {'Distance':<10} {'p_phys':<12} {'p_log':<12} {'Errors':<10} {'Shots':<12}")
-    print("-" * 65)
-    
-    sorted_results = sorted(results, key=lambda r: (r.k, r.physical_error_rate))
-    
-    for r in sorted_results:
-        print(f"{r.k:<5} {r.distance or 'N/A':<10} {r.physical_error_rate:<12.6f} "
-              f"{r.logical_error_rate:<12.6f} {r.errors:<10} {r.shots:<12}")
+    for basis in BASIS_VALUES:
+        print(f"\nBasis: {basis}")
+        print(f"{'k':<5} {'Distance':<10} {'p_phys':<12} {'p_log':<12} {'Errors':<10} {'Shots':<12}")
+        print("-" * 70)
+        
+        sorted_results = sorted(
+            [r for r in results if r.basis == basis],
+            key=lambda r: (r.k, r.physical_error_rate)
+        )
+        
+        for r in sorted_results:
+            print(f"{r.k:<5} {r.distance or 'N/A':<10} {r.physical_error_rate:<12.6f} "
+                  f"{r.logical_error_rate:<12.6f} {r.errors:<10} {r.shots:<12}")
 
 
 # =============================================================================
@@ -524,14 +553,15 @@ def main():
     if args.crumble_only:
         print("\nGenerating Crumble URLs...")
         urls = {}
-        for k in K_VALUES:
-            config_str = f"k={k}"
-            try:
-                url = generate_crumble_url(k=k, manhattan_radius=2)
-                urls[config_str] = url
-                print(f"  Generated URL for {config_str}")
-            except Exception as e:
-                print(f"  Error generating URL for {config_str}: {e}")
+        for basis in BASIS_VALUES:
+            for k in K_VALUES:
+                config_str = f"k={k}, basis={basis}"
+                try:
+                    url = generate_crumble_url(k=k, manhattan_radius=2, basis=basis)
+                    urls[config_str] = url
+                    print(f"  Generated URL for {config_str}")
+                except Exception as e:
+                    print(f"  Error generating URL for {config_str}: {e}")
         
         if urls:
             save_crumble_urls_html(urls)
@@ -555,6 +585,7 @@ def main():
         for r in results_dicts:
             results.append(BenchmarkResult(
                 k=r['k'],
+                basis=r['basis'],
                 distance=r['distance'],
                 physical_error_rate=r['physical_error_rate'],
                 logical_error_rate=r['logical_error_rate'],
@@ -576,6 +607,7 @@ def main():
     # Full benchmark mode
     print("Configuration:")
     print(f"  k values: {K_VALUES}")
+    print(f"  Basis values: {BASIS_VALUES}")
     print(f"  Physical error rates: {[f'{p:.6f}' for p in PHYSICAL_ERROR_RATES]}")
     print(f"  Decoder: pymatching")
     print(f"  Max shots: {MAX_SHOTS:,}")
@@ -592,14 +624,15 @@ def main():
     print("=" * 70)
     
     all_crumble_urls = {}
-    for k in K_VALUES:
-        config_str = f"k={k}"
-        try:
-            url = generate_crumble_url(k=k, manhattan_radius=2)
-            all_crumble_urls[config_str] = url
-            print(f"  Generated URL for {config_str}")
-        except Exception as e:
-            print(f"  Error generating URL for {config_str}: {e}")
+    for basis in BASIS_VALUES:
+        for k in K_VALUES:
+            config_str = f"k={k}, basis={basis}"
+            try:
+                url = generate_crumble_url(k=k, manhattan_radius=2, basis=basis)
+                all_crumble_urls[config_str] = url
+                print(f"  Generated URL for {config_str}")
+            except Exception as e:
+                print(f"  Error generating URL for {config_str}: {e}")
     
     # Save Crumble URLs to HTML
     if all_crumble_urls:

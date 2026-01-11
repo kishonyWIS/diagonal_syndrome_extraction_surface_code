@@ -3,16 +3,20 @@
 Manual construction of patch rotation circuit with asymmetric boundaries.
 
 Structure (z is temporal direction):
-z=3:          [1,0,3]  <- XZZ-like (±x=X, ±y=Z), measure Z
+z=3:          [1,0,3]  <- XZZ-like (±x=X, ±y=Z), measure Z (or X if basis='x')
                |
 z=2:  [0,0,2]-[1,0,2]  <- (0,0,2) has +y=Z override, measure X at (0,0,2)
          |      |
 z=1:  [0,0,1]-[1,0,1]  <- (1,0,1) has +x=X, -y=Z overrides, reset Z at (1,0,1)
          |
-z=0:  [0,0,0]          <- standard ZXZ, reset Z
+z=0:  [0,0,0]          <- standard ZXZ, reset Z (or X if basis='x')
 
 Each z-level has 2k+1 layers (1 init + 2k-1 bulk + 1 meas).
 Total: 4×(2k+1) layers.
+
+The `basis` parameter controls the logical qubit initialization and final measurement:
+- 'z': Reset Z at (0,0,0), Measure Z at (1,0,3) [default]
+- 'x': Reset X at (0,0,0), Measure X at (1,0,3)
 """
 
 # Set MEASUREMENT_SCHEDULE BEFORE importing any tqec modules
@@ -482,20 +486,29 @@ def create_block_layers(
 
 def create_patch_rotation_layers(
     scalable_shape: PhysicalQubitScalable2D = DEFAULT_SCALABLE_QUBIT_SHAPE,
+    basis: str = 'z',
 ) -> SequencedLayers:
     """
     Create all layers for the patch rotation circuit.
     
     4 temporal blocks, each with 2k+1 layers.
+    
+    Args:
+        scalable_shape: The scalable qubit shape for layout.
+        basis: Logical qubit basis - 'z' or 'x'.
+               Controls reset at (0,0,0) and measurement at (1,0,3).
     """
+    if basis not in ('z', 'x'):
+        raise ValueError(f"basis must be 'z' or 'x', got {basis!r}")
+    
     translator = create_translator()
     template = QubitTemplate()
     empty_plaquettes = create_empty_plaquettes(translator)
     
     # =========================================================================
-    # z=0 Block: Only cube (0,0), reset Z
+    # z=0 Block: Only cube (0,0), reset in specified basis
     # =========================================================================
-    z0_init_00 = create_z0_cube00_plaquettes(translator, reset="z")
+    z0_init_00 = create_z0_cube00_plaquettes(translator, reset=basis)
     z0_bulk_00 = create_z0_cube00_plaquettes(translator)
     z0_meas_00 = create_z0_cube00_plaquettes(translator)
     
@@ -540,11 +553,11 @@ def create_patch_rotation_layers(
     z2_layers = create_block_layers(template, z2_plaquettes, scalable_shape)
     
     # =========================================================================
-    # z=3 Block: Only cube (1,0), measure Z
+    # z=3 Block: Only cube (1,0), measure in specified basis
     # =========================================================================
     z3_init_10 = create_z3_cube10_plaquettes(translator)
     z3_bulk_10 = create_z3_cube10_plaquettes(translator)
-    z3_meas_10 = create_z3_cube10_plaquettes(translator, measurement="z")
+    z3_meas_10 = create_z3_cube10_plaquettes(translator, measurement=basis)
     
     z3_plaquettes = {
         (0, 0): (empty_plaquettes, empty_plaquettes, empty_plaquettes),
@@ -558,14 +571,18 @@ def create_patch_rotation_layers(
     return SequencedLayers([z0_layers, z1_layers, z2_layers, z3_layers])
 
 
-def create_patch_rotation_layer_tree() -> LayerTree:
+def create_patch_rotation_layer_tree(basis: str = 'z') -> LayerTree:
     """Create the LayerTree for the patch rotation circuit.
     
     Note: This creates the layer tree WITHOUT an observable.
     The observable is added separately using add_observable_from_missing_detector()
     because the FIXED_BULK_OBSERVABLE_BUILDER doesn't work for this asymmetric structure.
+    
+    Args:
+        basis: Logical qubit basis - 'z' or 'x'.
+               Controls reset at (0,0,0) and measurement at (1,0,3).
     """
-    layers = create_patch_rotation_layers()
+    layers = create_patch_rotation_layers(basis=basis)
     
     # Wrap in SequencedLayers as expected by LayerTree
     root = SequencedLayers([layers])
@@ -620,13 +637,20 @@ def add_observable_from_missing_detector(circuit: stim.Circuit) -> stim.Circuit:
 def generate_patch_rotation_circuit(
     k: int = 2,
     manhattan_radius: int = 2,
+    basis: str = 'z',
 ) -> stim.Circuit:
     """Generate the patch rotation circuit with the correct observable.
     
     The observable is derived from the "missing detector" which represents
     the stretched stabilizer spanning the block boundaries.
+    
+    Args:
+        k: The code distance parameter (distance = 2k+1).
+        manhattan_radius: Detector manhattan radius.
+        basis: Logical qubit basis - 'z' or 'x'.
+               Controls reset at (0,0,0) and measurement at (1,0,3).
     """
-    layer_tree = create_patch_rotation_layer_tree()
+    layer_tree = create_patch_rotation_layer_tree(basis=basis)
     circuit = layer_tree.generate_circuit(k, manhattan_radius=manhattan_radius)
     
     # Add the correct observable
@@ -635,23 +659,30 @@ def generate_patch_rotation_circuit(
     return circuit_with_obs
 
 
-def generate_crumble_url(k: int = 2, manhattan_radius: int = 2) -> str:
-    """Generate a Crumble URL for visualization."""
-    layer_tree = create_patch_rotation_layer_tree()
+def generate_crumble_url(k: int = 2, manhattan_radius: int = 2, basis: str = 'z') -> str:
+    """Generate a Crumble URL for visualization.
+    
+    Args:
+        k: The code distance parameter (distance = 2k+1).
+        manhattan_radius: Detector manhattan radius.
+        basis: Logical qubit basis - 'z' or 'x'.
+    """
+    layer_tree = create_patch_rotation_layer_tree(basis=basis)
     return layer_tree.generate_crumble_url(k, manhattan_radius=manhattan_radius)
 
 
-def compute_graphlike_distance(k: int = 2, noise_rate: float = 0.001) -> int:
+def compute_graphlike_distance(k: int = 2, noise_rate: float = 0.001, basis: str = 'z') -> int:
     """Compute the graphlike distance of the patch rotation circuit.
     
     Args:
         k: The code distance parameter (distance = 2k+1)
         noise_rate: Depolarizing noise rate for error model
+        basis: Logical qubit basis - 'z' or 'x'.
         
     Returns:
         The graphlike distance
     """
-    circuit = generate_patch_rotation_circuit(k, manhattan_radius=2)
+    circuit = generate_patch_rotation_circuit(k, manhattan_radius=2, basis=basis)
     
     # Add noise for error model
     noisy = stim.Circuit()
