@@ -451,7 +451,7 @@ def results_to_sinter_stats(results_data):
     return stats_list
 
 
-def plot_logical_error_rates(data_dict, save_path="benchmark_plots/x_junction_error_rates.png"):
+def plot_logical_error_rates(data_dict, save_path="benchmark_plots/x_junction_error_rates.pdf"):
     """Plot logical error rates using sinter.plot_error_rate (same style as benchmark_memory.py).
     
     Args:
@@ -601,8 +601,30 @@ if __name__ == "__main__":
     parser.add_argument('--noise-levels', nargs='+', type=float,
                        default=np.logspace(-3.5, -2, 7),
                        help='Physical error rates to test (default: 0.001 0.002 0.005)')
+    parser.add_argument('--plot-only', action='store_true',
+                       help='Only generate plots from existing CSV data (skip all computations)')
+    parser.add_argument('--load-error-rates', type=str, default=None,
+                       help='Path to CSV file with error rates (default: benchmark_data/x_junction_error_rates.csv)')
     
     args = parser.parse_args()
+    
+    # Handle plot-only mode
+    if args.plot_only:
+        print("=== PLOT-ONLY MODE ===")
+        print("Loading data from CSV files and generating plots...")
+        print()
+        
+        # Load error rates
+        error_rates_file = args.load_error_rates or "benchmark_data/x_junction_error_rates.csv"
+        try:
+            all_error_rates = load_error_rates_from_csv(error_rates_file)
+            print(f"Loaded error rates from {error_rates_file}")
+            plot_logical_error_rates(all_error_rates)
+            print("\nPlot-only mode complete!")
+        except FileNotFoundError:
+            print(f"Error: {error_rates_file} not found")
+            sys.exit(1)
+        sys.exit(0)
     
     # If error rates are requested, we need to test multiple k values
     k_values = [1, 2, 3] if args.error_rates else [1]

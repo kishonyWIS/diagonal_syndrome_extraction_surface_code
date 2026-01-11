@@ -149,13 +149,55 @@ class DiagonalPipeBuilder(PipeBuilder):
         from tqec.utils.exceptions import TQECError
         
         if spec.pipe_kind.is_temporal:
-            # For temporal pipes, delegate to original
-            from tqec.compile.specs.library.fixed_bulk import FixedBulkPipeBuilder
-            from tqec.plaquette.compilation.base import IdentityPlaquetteCompiler
-            original_builder = FixedBulkPipeBuilder(IdentityPlaquetteCompiler, DefaultRPNGTranslator())
-            return original_builder(spec, block_temporal_height)
+            # Use diagonal plaquettes for temporal pipes too
+            return self._get_temporal_pipe_block(spec)
         
-        # Spatial pipe
+        # Spatial pipe - check if it's between spatial cubes or regular cubes
+        cube_specs = spec.cube_specs
+        if cube_specs[0].is_spatial or cube_specs[1].is_spatial:
+            return self._get_spatial_cube_pipe_block(spec, block_temporal_height)
+        return self._get_spatial_regular_pipe_block(spec, block_temporal_height)
+    
+    def _get_temporal_pipe_block(self, spec):
+        """Build a temporal pipe using diagonal plaquettes."""
+        from tqec.compile.blocks.block import Block
+        from tqec.compile.blocks.layers.atomic.plaquettes import PlaquetteLayer
+        
+        assert spec.pipe_kind.is_temporal
+        
+        if spec.pipe_kind.has_hadamard:
+            # For Hadamard temporal pipes, delegate to fixed bulk for now
+            # (Hadamard transitions are more complex)
+            from tqec.compile.specs.library.fixed_bulk import FixedBulkPipeBuilder
+            temporal_builder = FixedBulkPipeBuilder(CustomIdentityPlaquetteCompiler, DefaultRPNGTranslator())
+            # We need to call the internal method, but we don't have block_temporal_height here
+            # For now, raise an error - Hadamard temporal pipes need special handling
+            raise NotImplementedError("Hadamard temporal pipes with diagonal convention not yet implemented")
+        
+        # Non-Hadamard temporal pipe: just bulk plaquettes with diagonal schedule
+        z_observable_orientation = (
+            Orientation.HORIZONTAL if spec.pipe_kind.x == Basis.Z else Orientation.VERTICAL
+        )
+        
+        # Use diagonal generator to get bulk plaquettes
+        memory_plaquettes = self._generator.get_memory_qubit_plaquettes(
+            z_observable_orientation, None, None
+        )
+        template = self._generator.get_memory_qubit_raw_template()
+        
+        # Temporal pipe needs 2 or 3 layers depending on whether we're at a Hadamard layer
+        num_layers = 3 if spec.at_temporal_hadamard_layer else 2
+        
+        return Block(
+            [PlaquetteLayer(template, memory_plaquettes) for _ in range(num_layers)]
+        )
+    
+    def _get_spatial_cube_pipe_block(self, spec, block_temporal_height: LinearFunction):
+        """Build a spatial pipe between spatial cubes (XXZ or ZZX)."""
+        from tqec.compile.blocks.block import Block
+        from tqec.compile.blocks.layers.atomic.plaquettes import PlaquetteLayer
+        from tqec.compile.blocks.layers.composed.repeated import RepeatedLayer
+        
         x, y, z = spec.pipe_kind.x, spec.pipe_kind.y, spec.pipe_kind.z
         assert x is not None or y is not None
         spatial_boundary_basis: Basis = x if x is not None else y  # type: ignore
@@ -186,9 +228,64 @@ class DiagonalPipeBuilder(PipeBuilder):
             ]
         )
     
+    def _get_spatial_regular_pipe_block(self, spec, block_temporal_height: LinearFunction):
+        """Build a spatial pipe between non-spatial cubes (e.g., ZXZ)."""
+        from tqec.compile.blocks.block import Block
+        from tqec.compile.blocks.layers.atomic.plaquettes import PlaquetteLayer
+        from tqec.compile.blocks.layers.composed.repeated import RepeatedLayer
+        from tqec.utils.position import Direction3D
+        
+        z = spec.pipe_kind.z
+        
+        # Get template and plaquettes based on pipe direction
+        if spec.pipe_kind.direction == Direction3D.X:
+            # Vertical boundary (x-direction pipe)
+            z_observable_orientation = (
+                Orientation.HORIZONTAL if spec.pipe_kind.y == Basis.X else Orientation.VERTICAL
+            )
+            template = self._generator.get_memory_vertical_boundary_raw_template()
+            init_plaquettes = self._generator.get_memory_vertical_boundary_plaquettes(
+                z_observable_orientation, z, None
+            )
+            bulk_plaquettes = self._generator.get_memory_vertical_boundary_plaquettes(
+                z_observable_orientation, None, None
+            )
+            measure_plaquettes = self._generator.get_memory_vertical_boundary_plaquettes(
+                z_observable_orientation, None, z
+            )
+        else:  # Direction3D.Y
+            # Horizontal boundary (y-direction pipe)
+            z_observable_orientation = (
+                Orientation.HORIZONTAL if spec.pipe_kind.x == Basis.Z else Orientation.VERTICAL
+            )
+            template = self._generator.get_memory_horizontal_boundary_raw_template()
+            init_plaquettes = self._generator.get_memory_horizontal_boundary_plaquettes(
+                z_observable_orientation, z, None
+            )
+            bulk_plaquettes = self._generator.get_memory_horizontal_boundary_plaquettes(
+                z_observable_orientation, None, None
+            )
+            measure_plaquettes = self._generator.get_memory_horizontal_boundary_plaquettes(
+                z_observable_orientation, None, z
+            )
+        
+        return Block(
+            [
+                PlaquetteLayer(template, init_plaquettes),
+                RepeatedLayer(
+                    PlaquetteLayer(template, bulk_plaquettes),
+                    repetitions=block_temporal_height,
+                ),
+                PlaquetteLayer(template, measure_plaquettes),
+            ]
+        )
+    
     @staticmethod
     def _get_spatial_cube_arms(spec) -> SpatialArms:
         """Return the arm(s) corresponding to the provided spec."""
+        from tqec.compile.specs.enums import SpatialArms
+        from tqec.utils.position import Direction3D
+        
         assert spec.pipe_kind.is_spatial
         assert any(spec.is_spatial for spec in spec.cube_specs)
         u, v = spec.cube_specs
@@ -344,7 +441,7 @@ def calculate_logical_error_rate(circuit, shots=100000, noise_levels=[0.001, 0.0
     return results
 
 
-def plot_distance_vs_k(distance_data, save_path="benchmark_plots/memory_distance_vs_k.png"):
+def plot_distance_vs_k(distance_data, save_path="benchmark_plots/memory_distance_vs_k.pdf"):
     """Plot circuit distance vs k for both circuit types."""
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     
@@ -447,7 +544,7 @@ def results_to_sinter_stats(results_data):
     return stats_list
 
 
-def plot_logical_error_rates_multi_k(results_data, save_path="benchmark_plots/memory_error_rates.png"):
+def plot_logical_error_rates_multi_k(results_data, save_path="benchmark_plots/memory_error_rates.pdf"):
     """Plot logical error rate vs physical error rate using sinter.plot_error_rate."""
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     
@@ -739,8 +836,37 @@ def main():
                        help='Load distances from CSV file instead of recomputing')
     parser.add_argument('--load-error-rates', type=str, default=None,
                        help='Load error rates from CSV file instead of recomputing')
+    parser.add_argument('--plot-only', action='store_true',
+                       help='Only generate plots from existing CSV data (skip all computations)')
     
     args = parser.parse_args()
+    
+    # Handle plot-only mode
+    if args.plot_only:
+        print("=== PLOT-ONLY MODE ===")
+        print("Loading data from CSV files and generating plots...")
+        print()
+        
+        # Load distances
+        distances_file = args.load_distances or "benchmark_data/memory_distances.csv"
+        try:
+            all_distances = load_distances_from_csv(distances_file)
+            print(f"Loaded distances from {distances_file}")
+            plot_distance_vs_k(all_distances)
+        except FileNotFoundError:
+            print(f"Warning: {distances_file} not found, skipping distance plot")
+        
+        # Load error rates
+        error_rates_file = args.load_error_rates or "benchmark_data/memory_error_rates.csv"
+        try:
+            all_results = load_error_rates_from_csv(error_rates_file)
+            print(f"Loaded error rates from {error_rates_file}")
+            plot_logical_error_rates_multi_k(all_results)
+        except FileNotFoundError:
+            print(f"Warning: {error_rates_file} not found, skipping error rate plot")
+        
+        print("\nPlot-only mode complete!")
+        return
     
     print("=== Memory Experiment Comparison: Original vs Diagonal Circuits ===")
     print(f"MEASUREMENT_SCHEDULE modified to: {constants.MEASUREMENT_SCHEDULE}")

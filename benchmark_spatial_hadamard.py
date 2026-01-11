@@ -16,6 +16,7 @@ Parameters swept:
 - Decoder: plain pymatching, correlated pymatching, tesseract
 """
 
+import argparse
 import csv
 import os
 import sys
@@ -689,7 +690,7 @@ def results_to_sinter_stats(results: list[dict], decoder_filter: str = None) -> 
 def plot_error_rates(
     results: list[dict],
     decoder: str = 'pymatching',
-    save_path: str = "benchmark_plots/spatial_hadamard_error_rates.png"
+    save_path: str = "benchmark_plots/spatial_hadamard_error_rates.pdf"
 ):
     """Plot logical error rates using sinter.plot_error_rate.
     
@@ -799,7 +800,7 @@ def plot_all_decoders(
     decoders = set(r['decoder'] for r in results)
     
     for decoder in sorted(decoders):
-        save_path = os.path.join(output_dir, f"spatial_hadamard_{decoder}_error_rates.png")
+        save_path = os.path.join(output_dir, f"spatial_hadamard_{decoder}_error_rates.pdf")
         plot_error_rates(results, decoder=decoder, save_path=save_path)
     
     print(f"\nGenerated plots for {len(decoders)} decoders in {output_dir}")
@@ -840,12 +841,86 @@ def print_summary(results: list[BenchmarkResult]) -> None:
 # Main Entry Point
 # =============================================================================
 
+def parse_args():
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Benchmark Spatial Hadamard circuits with various decoders.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Run full benchmark
+  python benchmark_spatial_hadamard.py
+  
+  # Plot only from existing CSV (no benchmark)
+  python benchmark_spatial_hadamard.py --plot-only
+  
+  # Plot from a specific CSV file
+  python benchmark_spatial_hadamard.py --plot-only --csv benchmark_data/my_results.csv
+"""
+    )
+    parser.add_argument(
+        '--plot-only',
+        action='store_true',
+        help='Only generate plots from existing CSV data (skip benchmark)'
+    )
+    parser.add_argument(
+        '--csv',
+        type=str,
+        default=OUTPUT_CSV,
+        help=f'Path to CSV file for loading/saving results (default: {OUTPUT_CSV})'
+    )
+    return parser.parse_args()
+
+
 def main():
     """Main entry point for the benchmark script."""
+    args = parse_args()
+    
     print("=" * 70)
     print("Spatial Hadamard Circuit Benchmark (Sinter-based)")
     print("=" * 70)
     print()
+    
+    if args.plot_only:
+        # Plot-only mode: load from CSV and generate plots
+        print(f"PLOT-ONLY MODE: Loading results from {args.csv}")
+        print("=" * 70)
+        
+        if not os.path.exists(args.csv):
+            print(f"Error: CSV file not found: {args.csv}")
+            sys.exit(1)
+        
+        # Load results from CSV (as dictionaries for plot functions)
+        results_dicts = load_results_from_csv(args.csv)
+        
+        # Generate plots (plot functions expect dictionaries)
+        print("\nGenerating plots...")
+        plot_all_decoders(results_dicts, output_dir="benchmark_plots")
+        
+        # Convert to BenchmarkResult objects for print_summary
+        results = []
+        for r in results_dicts:
+            results.append(BenchmarkResult(
+                direction=r['direction'],
+                flag_config=r['flag_config'],
+                k=r['k'],
+                distance=r['distance'],
+                physical_error_rate=r['physical_error_rate'],
+                decoder=r['decoder'],
+                logical_error_rate=r['logical_error_rate'],
+                errors=r['errors'],
+                shots=r['shots'],
+                error_bar=r['error_bar'],
+                decode_time=r['decode_time'],
+            ))
+        
+        # Print summary
+        print_summary(results)
+        
+        print("\nPlot-only mode complete!")
+        return
+    
+    # Full benchmark mode
     print("Configuration:")
     print(f"  Directions: {DIRECTIONS}")
     print(f"  Flag configs: {FLAG_CONFIGS}")
@@ -855,7 +930,7 @@ def main():
     print(f"  Max shots: {MAX_SHOTS:,}")
     print(f"  Max errors: {MAX_ERRORS:,}")
     print(f"  Num workers: {NUM_WORKERS}")
-    print(f"  Output file: {OUTPUT_CSV}")
+    print(f"  Output file: {args.csv}")
     print()
     
     start_time = time.time()
@@ -897,11 +972,11 @@ def main():
     # Print summary
     print_summary(results)
     
-    print(f"\nResults saved incrementally to: {OUTPUT_CSV}")
+    print(f"\nResults saved incrementally to: {args.csv}")
     
     total_time = time.time() - start_time
     print(f"\nTotal benchmark time: {total_time:.2f}s ({total_time/60:.1f} minutes)")
-    print(f"\nResults saved to: {OUTPUT_CSV}")
+    print(f"\nResults saved to: {args.csv}")
 
 
 if __name__ == "__main__":

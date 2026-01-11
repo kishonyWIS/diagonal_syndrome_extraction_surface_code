@@ -126,7 +126,7 @@ def calculate_logical_error_rate(circuit, shots=100000, noise_levels=[0.001, 0.0
     return results
 
 
-def plot_distance_vs_k(distance_data, save_path="distance_vs_k.png"):
+def plot_distance_vs_k(distance_data, save_path="distance_vs_k.pdf"):
     """Plot circuit distance vs k for both circuit types."""
     if not distance_data:
         print("Cannot create distance plot - missing data")
@@ -191,7 +191,7 @@ def plot_distance_vs_k(distance_data, save_path="distance_vs_k.png"):
     return plt
 
 
-def plot_logical_error_rates_multi_k(results_data, save_path="logical_error_rates_multi_k.png"):
+def plot_logical_error_rates_multi_k(results_data, save_path="logical_error_rates_multi_k.pdf"):
     """Plot logical error rate vs physical error rate for multiple k values and circuit types."""
     if not results_data:
         print("Cannot create plot - missing data")
