@@ -22,6 +22,9 @@ from tqec.utils.enums import Basis
 # Import spatial hadamard layer tree function
 from spatial_hadamard_manual_construction import get_spatial_hadamard_layer_tree
 
+# Import patch rotation layer tree function
+from patch_rotation_manual import create_patch_rotation_layer_tree
+
 # Import extended plaquette visualization
 from tqec.visualisation.computation.plaquette.extended import (
     ExtendedPlaquetteDrawer,
@@ -756,6 +759,61 @@ def generate_spatial_hadamard_visualizations(
     print(f"Saved: {pdf_path}")
 
 
+def generate_patch_rotation_visualizations(
+    basis: str = 'z',
+    k: int = 2,
+    layer_index: int = 1,
+    output_dir: str = "benchmark_plots/svgs"
+):
+    """Generate PDF visualization for patch rotation circuit.
+    
+    The patch rotation has 4 temporal blocks, each with 2k+1 layers:
+    - z=0: Block at (0,0) only
+    - z=1: Blocks at (0,0) and (1,0) connected by pipe
+    - z=2: Blocks at (0,0) and (1,0) connected by pipe  
+    - z=3: Block at (1,0) only
+    
+    Args:
+        basis: 'z' or 'x' - logical qubit init/measure basis
+        k: Scaling factor
+        layer_index: Which layer to generate (default: 1 for bulk layer of first block)
+        output_dir: Output directory for files
+    """
+    import os
+    os.makedirs(output_dir, exist_ok=True)
+    
+    print(f"=== Generating patch_rotation (basis={basis}) schedule ===")
+    
+    layer_tree = create_patch_rotation_layer_tree(basis=basis)
+    svg_list = layer_tree.layers_to_svg(k=k)
+    
+    print(f"  Total layers: {len(svg_list)}")
+    
+    # Generate multiple layer visualizations to show the different temporal blocks
+    # Each temporal block has 2k+1 layers
+    layers_per_block = 2 * k + 1
+    
+    # Generate visualization for specified layer
+    if layer_index >= len(svg_list):
+        print(f"Warning: layer_index {layer_index} >= {len(svg_list)} layers, using last layer")
+        layer_index = len(svg_list) - 1
+    
+    svg_string = svg_list[layer_index]
+    
+    pdf_path = os.path.join(output_dir, f"patch_rotation_basis_{basis}_layer_{layer_index}.pdf")
+    svg_to_pdf(svg_string, pdf_path)
+    print(f"  Saved: {pdf_path}")
+    
+    # Also generate bulk layer for each temporal block (layer 1 of each block)
+    for block_idx in range(4):
+        block_layer_idx = block_idx * layers_per_block + 1  # Bulk layer (index 1 within each block)
+        if block_layer_idx < len(svg_list):
+            svg_string = svg_list[block_layer_idx]
+            pdf_path = os.path.join(output_dir, f"patch_rotation_basis_{basis}_block_{block_idx}_bulk.pdf")
+            svg_to_pdf(svg_string, pdf_path)
+            print(f"  Saved: {pdf_path}")
+
+
 def main():
     import os
     output_dir = "benchmark_plots/svgs"
@@ -792,6 +850,17 @@ def main():
     print("SPATIAL HADAMARD (Y-axis)")
     print("=" * 50)
     generate_spatial_hadamard_visualizations(axis='y', k=2, layer_index=1, output_dir=output_dir)
+    
+    # Generate patch rotation visualizations
+    print("\n" + "=" * 50)
+    print("PATCH ROTATION (Z-basis)")
+    print("=" * 50)
+    generate_patch_rotation_visualizations(basis='z', k=2, layer_index=1, output_dir=output_dir)
+    
+    print("\n" + "=" * 50)
+    print("PATCH ROTATION (X-basis)")
+    print("=" * 50)
+    generate_patch_rotation_visualizations(basis='x', k=2, layer_index=1, output_dir=output_dir)
     
     print("\n" + "=" * 50)
     print("Done!")
