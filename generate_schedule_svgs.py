@@ -762,7 +762,6 @@ def generate_spatial_hadamard_visualizations(
 def generate_patch_rotation_visualizations(
     basis: str = 'z',
     k: int = 2,
-    layer_index: int = 1,
     output_dir: str = "benchmark_plots/svgs"
 ):
     """Generate PDF visualization for patch rotation circuit.
@@ -773,10 +772,11 @@ def generate_patch_rotation_visualizations(
     - z=2: Blocks at (0,0) and (1,0) connected by pipe  
     - z=3: Block at (1,0) only
     
+    Generates bulk layer (layer 1 + (2k+1)*i) for each temporal block i=0,1,2,3.
+    
     Args:
         basis: 'z' or 'x' - logical qubit init/measure basis
         k: Scaling factor
-        layer_index: Which layer to generate (default: 1 for bulk layer of first block)
         output_dir: Output directory for files
     """
     import os
@@ -789,29 +789,17 @@ def generate_patch_rotation_visualizations(
     
     print(f"  Total layers: {len(svg_list)}")
     
-    # Generate multiple layer visualizations to show the different temporal blocks
     # Each temporal block has 2k+1 layers
     layers_per_block = 2 * k + 1
     
-    # Generate visualization for specified layer
-    if layer_index >= len(svg_list):
-        print(f"Warning: layer_index {layer_index} >= {len(svg_list)} layers, using last layer")
-        layer_index = len(svg_list) - 1
-    
-    svg_string = svg_list[layer_index]
-    
-    pdf_path = os.path.join(output_dir, f"patch_rotation_basis_{basis}_layer_{layer_index}.pdf")
-    svg_to_pdf(svg_string, pdf_path)
-    print(f"  Saved: {pdf_path}")
-    
-    # Also generate bulk layer for each temporal block (layer 1 of each block)
+    # Generate bulk layer for each temporal block: layer 1 + (2k+1)*i for i=0,1,2,3
     for block_idx in range(4):
-        block_layer_idx = block_idx * layers_per_block + 1  # Bulk layer (index 1 within each block)
-        if block_layer_idx < len(svg_list):
-            svg_string = svg_list[block_layer_idx]
-            pdf_path = os.path.join(output_dir, f"patch_rotation_basis_{basis}_block_{block_idx}_bulk.pdf")
+        layer_idx = 1 + layers_per_block * block_idx
+        if layer_idx < len(svg_list):
+            svg_string = svg_list[layer_idx]
+            pdf_path = os.path.join(output_dir, f"patch_rotation_basis_{basis}_block_{block_idx}_layer_{layer_idx}.pdf")
             svg_to_pdf(svg_string, pdf_path)
-            print(f"  Saved: {pdf_path}")
+            print(f"  Block {block_idx}: layer {layer_idx} -> {pdf_path}")
 
 
 def main():
@@ -855,12 +843,12 @@ def main():
     print("\n" + "=" * 50)
     print("PATCH ROTATION (Z-basis)")
     print("=" * 50)
-    generate_patch_rotation_visualizations(basis='z', k=2, layer_index=1, output_dir=output_dir)
+    generate_patch_rotation_visualizations(basis='z', k=2, output_dir=output_dir)
     
     print("\n" + "=" * 50)
     print("PATCH ROTATION (X-basis)")
     print("=" * 50)
-    generate_patch_rotation_visualizations(basis='x', k=2, layer_index=1, output_dir=output_dir)
+    generate_patch_rotation_visualizations(basis='x', k=2, output_dir=output_dir)
     
     print("\n" + "=" * 50)
     print("Done!")
