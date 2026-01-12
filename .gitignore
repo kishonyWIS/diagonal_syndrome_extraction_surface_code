@@ -45,3 +45,6 @@ benchmark_plots/
 
 # Generated images (keep if needed for documentation)
 # *.png
+
+# Overleaf directory (separate repository)
+overleaf/
