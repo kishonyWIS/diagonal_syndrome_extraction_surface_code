@@ -846,11 +846,6 @@ def main():
     generate_patch_rotation_visualizations(basis='z', k=2, output_dir=output_dir)
     
     print("\n" + "=" * 50)
-    print("PATCH ROTATION (X-basis)")
-    print("=" * 50)
-    generate_patch_rotation_visualizations(basis='x', k=2, output_dir=output_dir)
-    
-    print("\n" + "=" * 50)
     print("Done!")
     print("=" * 50)
 

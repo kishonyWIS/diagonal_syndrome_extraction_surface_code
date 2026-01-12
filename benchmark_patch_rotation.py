@@ -443,49 +443,111 @@ def load_results_from_csv(filepath: str) -> list[dict]:
 # Plotting
 # =============================================================================
 
+def results_to_sinter_stats(results: list[dict]) -> list[sinter.TaskStats]:
+    """Convert results to sinter.TaskStats for plotting.
+    
+    Args:
+        results: List of result dictionaries
+        
+    Returns:
+        List of sinter.TaskStats objects
+    """
+    stats_list = []
+    
+    for result in results:
+        stats = sinter.TaskStats(
+            strong_id=f"k{result['k']}_{result['basis']}_p{result['physical_error_rate']}",
+            decoder='pymatching',
+            json_metadata={
+                'p': result['physical_error_rate'],
+                'k': result['k'],
+                'd': 2 * result['k'] + 1,
+                'basis': result['basis'],
+            },
+            shots=result['shots'],
+            errors=result['errors'],
+        )
+        stats_list.append(stats)
+    
+    return stats_list
+
+
 def plot_results(results: list[BenchmarkResult], output_dir: str = 'benchmark_plots') -> None:
-    """Generate plots from benchmark results."""
+    """Generate plots from benchmark results using sinter.plot_error_rate.
+    
+    Creates two panels: one for z basis, one for x basis.
+    Groups by k value with consistent styling.
+    """
     os.makedirs(output_dir, exist_ok=True)
     
-    colors = plt.cm.viridis(np.linspace(0, 0.8, len(K_VALUES)))
-    linestyles = {'z': '-', 'x': '--'}
-    markers = {'z': 'o', 'x': 's'}
+    # Convert BenchmarkResult objects to dictionaries for results_to_sinter_stats
+    results_dicts = []
+    for r in results:
+        results_dicts.append({
+            'k': r.k,
+            'basis': r.basis,
+            'distance': r.distance,
+            'physical_error_rate': r.physical_error_rate,
+            'logical_error_rate': r.logical_error_rate,
+            'errors': r.errors,
+            'shots': r.shots,
+            'error_bar': r.error_bar,
+        })
     
-    fig, ax = plt.subplots(figsize=(10, 7))
-    ax.set_title('Patch Rotation Benchmark (pymatching)')
-    ax.set_xlabel('Physical Error Rate')
-    ax.set_ylabel('Logical Error Rate')
-    ax.set_xscale('log')
-    ax.set_yscale('log')
+    stats_list = results_to_sinter_stats(results_dicts)
     
-    for basis in BASIS_VALUES:
-        for k, color in zip(K_VALUES, colors):
-            # Filter results for this k and basis
-            filtered = [r for r in results if r.k == k and r.basis == basis]
-            
-            if not filtered:
-                continue
-            
-            # Sort by physical error rate
-            filtered.sort(key=lambda r: r.physical_error_rate)
-            
-            x = [r.physical_error_rate for r in filtered]
-            y = [r.logical_error_rate for r in filtered]
-            yerr = [r.error_bar for r in filtered]
-            
-            distance = filtered[0].distance if filtered[0].distance else 2*k+1
-            ax.errorbar(x, y, yerr=yerr, 
-                       marker=markers[basis],
-                       linestyle=linestyles[basis],
-                       label=f'k={k}, basis={basis} (d={distance})',
-                       color=color, capsize=3)
+    if not stats_list:
+        print("No data to plot")
+        return
     
-    ax.legend()
-    ax.grid(True, alpha=0.3)
+    # Define colors by k value
+    k_colors = {1: 'C0', 2: 'C1', 3: 'C2', 4: 'C3', 5: 'C4'}
     
-    plt.tight_layout()
-    plot_path = os.path.join(output_dir, 'patch_rotation_benchmark.png')
-    plt.savefig(plot_path, dpi=150)
+    # Create figure with two panels, sharing y-axis
+    fig, axes = plt.subplots(1, 2, figsize=(16, 7), sharey=True)
+    
+    def plot_args_func(index, curve_id):
+        # curve_id format: "k=1" or "k=2"
+        k = int(curve_id.split('=')[1])
+        return {
+            'color': k_colors.get(k, 'black'),
+            'marker': 'o',
+            'linestyle': '-',
+        }
+    
+    # Plot for each basis
+    for i, (ax, basis) in enumerate(zip(axes, ['z', 'x'])):
+        # Filter stats for this basis
+        basis_stats = [s for s in stats_list if s.json_metadata['basis'] == basis]
+        
+        if not basis_stats:
+            continue
+        
+        sinter.plot_error_rate(
+            ax=ax,
+            stats=basis_stats,
+            x_func=lambda s: s.json_metadata['p'],
+            group_func=lambda s: f"k={s.json_metadata['k']}",
+            plot_args_func=plot_args_func,
+        )
+        
+        ax.legend(fontsize=12, loc='best')
+        ax.loglog()
+        ax.set_xlabel("Physical Error Rate (Uniform Depolarizing)", fontsize=16)
+        if i == 0:  # Only set ylabel on left panel
+            ax.set_ylabel("Logical Error Rate (per Shot)", fontsize=16)
+        ax.tick_params(axis='both', which='major', labelsize=14)
+        ax.tick_params(axis='both', which='minor', labelsize=12)
+        ax.grid(which='major', alpha=0.5)
+        ax.grid(which='minor', alpha=0.2)
+        ax.set_title(f"Basis: {basis.upper()}", fontsize=16)
+    
+    fig.set_dpi(150)
+    fig.tight_layout()
+    
+    # Save plot as PDF
+    plot_path = os.path.join(output_dir, 'patch_rotation_benchmark.pdf')
+    fig.savefig(plot_path, dpi=300, bbox_inches='tight')
     print(f"Saved plot to {plot_path}")
     plt.close()
 
@@ -519,46 +581,59 @@ def print_summary(results: list[BenchmarkResult]) -> None:
 # Crumble URL Generation
 # =============================================================================
 
-def save_crumble_urls_html(urls: dict, output_dir: str = 'crumble_urls') -> None:
-    """Save Crumble URLs to an HTML file for easy access."""
+def save_crumble_urls_html(urls_dict: dict, output_dir: str = 'crumble_urls', experiment_name: str = 'patch_rotation') -> None:
+    """Save Crumble URLs as HTML files with clickable links.
+    
+    Args:
+        urls_dict: Dict with structure {config_str: {'before': url, 'after': url}}
+        output_dir: Directory to save HTML files
+        experiment_name: Name of the experiment for the HTML title
+    """
     os.makedirs(output_dir, exist_ok=True)
     
-    html_path = os.path.join(output_dir, 'patch_rotation_crumble.html')
-    
-    html_content = """<!DOCTYPE html>
+    # Create an index HTML file
+    index_html = f"""<!DOCTYPE html>
 <html>
 <head>
-    <title>Patch Rotation Circuit Crumble URLs</title>
+    <title>{experiment_name.replace('_', ' ').title()} - Crumble URLs</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 20px; }
-        h1 { color: #333; }
-        .config { margin: 20px 0; padding: 10px; background: #f5f5f5; border-radius: 5px; }
-        .config h3 { margin: 0 0 10px 0; color: #555; }
-        a { color: #0066cc; text-decoration: none; }
-        a:hover { text-decoration: underline; }
+        body {{ font-family: Arial, sans-serif; margin: 20px; }}
+        h1 {{ color: #333; }}
+        h2 {{ color: #555; margin-top: 30px; }}
+        h3 {{ color: #777; }}
+        .circuit {{ margin: 10px 0; padding: 10px; background: #f5f5f5; border-radius: 5px; }}
+        a {{ color: #0066cc; text-decoration: none; }}
+        a:hover {{ text-decoration: underline; }}
+        .before {{ color: #cc6600; }}
+        .after {{ color: #006600; }}
     </style>
 </head>
 <body>
-    <h1>Patch Rotation Circuit Crumble URLs</h1>
+    <h1>{experiment_name.replace('_', ' ').title()} - Crumble Circuit Visualizations</h1>
 """
     
-    for config_str, url in sorted(urls.items()):
-        html_content += f"""
-    <div class="config">
-        <h3>{config_str}</h3>
-        <p><a href="{url}" target="_blank">Open in Crumble →</a></p>
-    </div>
-"""
+    for config_str, urls in sorted(urls_dict.items()):
+        index_html += f"    <div class='circuit'>\n"
+        index_html += f"        <h3>{config_str}</h3>\n"
+        
+        if 'before' in urls and urls['before']:
+            index_html += f"        <p class='before'>Before compactification: <a href='{urls['before']}' target='_blank'>Open in Crumble</a></p>\n"
+        
+        if 'after' in urls and urls['after']:
+            index_html += f"        <p class='after'>After compactification: <a href='{urls['after']}' target='_blank'>Open in Crumble</a></p>\n"
+        
+        index_html += f"    </div>\n"
     
-    html_content += """
-</body>
+    index_html += """</body>
 </html>
 """
     
-    with open(html_path, 'w') as f:
-        f.write(html_content)
+    # Save the index file
+    index_path = os.path.join(output_dir, f"{experiment_name}_crumble_urls.html")
+    with open(index_path, 'w') as f:
+        f.write(index_html)
     
-    print(f"Saved Crumble URLs to {html_path}")
+    print(f"Saved Crumble URLs to {index_path}")
 
 
 # =============================================================================
@@ -583,20 +658,28 @@ def main():
     
     # Crumble-only mode
     if args.crumble_only:
-        print("\nGenerating Crumble URLs...")
+        print("\nGenerating Crumble URLs (before and after compactification)...")
         urls = {}
         for basis in BASIS_VALUES:
             for k in K_VALUES:
+                config = CircuitConfig(k, basis)
                 config_str = f"k={k}, basis={basis}"
                 try:
-                    url = generate_crumble_url(k=k, manhattan_radius=2, basis=basis)
-                    urls[config_str] = url
-                    print(f"  Generated URL for {config_str}")
+                    circuit_before, circuit_after = generate_circuit_for_config(config, return_both=True)
+                    
+                    url_before = circuit_before.to_crumble_url()
+                    url_after = circuit_after.to_crumble_url()
+                    
+                    urls[config_str] = {
+                        'before': url_before,
+                        'after': url_after
+                    }
+                    print(f"  Generated URLs for {config_str}")
                 except Exception as e:
-                    print(f"  Error generating URL for {config_str}: {e}")
+                    print(f"  Error generating URLs for {config_str}: {e}")
         
         if urls:
-            save_crumble_urls_html(urls)
+            save_crumble_urls_html(urls, output_dir='crumble_urls', experiment_name='patch_rotation')
         
         print("\nCrumble URL generation complete!")
         return
@@ -650,25 +733,33 @@ def main():
     
     start_time = time.time()
     
-    # Generate Crumble URLs
+    # Generate Crumble URLs (before and after compactification)
     print("=" * 70)
-    print("Generating Crumble URLs")
+    print("Generating Crumble URLs (before and after compactification)")
     print("=" * 70)
     
     all_crumble_urls = {}
     for basis in BASIS_VALUES:
         for k in K_VALUES:
+            config = CircuitConfig(k, basis)
             config_str = f"k={k}, basis={basis}"
             try:
-                url = generate_crumble_url(k=k, manhattan_radius=2, basis=basis)
-                all_crumble_urls[config_str] = url
-                print(f"  Generated URL for {config_str}")
+                circuit_before, circuit_after = generate_circuit_for_config(config, return_both=True)
+                
+                url_before = circuit_before.to_crumble_url()
+                url_after = circuit_after.to_crumble_url()
+                
+                all_crumble_urls[config_str] = {
+                    'before': url_before,
+                    'after': url_after
+                }
+                print(f"  Generated URLs for {config_str}")
             except Exception as e:
-                print(f"  Error generating URL for {config_str}: {e}")
+                print(f"  Error generating URLs for {config_str}: {e}")
     
     # Save Crumble URLs to HTML
     if all_crumble_urls:
-        save_crumble_urls_html(all_crumble_urls)
+        save_crumble_urls_html(all_crumble_urls, output_dir='crumble_urls', experiment_name='patch_rotation')
     
     # Run benchmark with distance calculation enabled
     results = run_benchmark(skip_distance=False)
