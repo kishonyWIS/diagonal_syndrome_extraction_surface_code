@@ -31,7 +31,6 @@ sys.stdout.reconfigure(line_buffering=True)
 
 from patch_rotation_manual import (
     generate_patch_rotation_circuit,
-    compute_graphlike_distance,
     generate_crumble_url,
 )
 from tqec import NoiseModel
@@ -93,16 +92,37 @@ class BenchmarkResult:
 # Circuit Generation and Distance Computation
 # =============================================================================
 
-def generate_circuit_for_config(config: CircuitConfig) -> stim.Circuit:
-    """Generate a patch rotation circuit for the given configuration (without noise).
+def generate_circuit_for_config(config: CircuitConfig, return_both: bool = False) -> stim.Circuit:
+    """Generate a patch rotation circuit for the given configuration (without noise, compacted).
     
     Args:
         config: Circuit configuration
+        return_both: If True, return tuple (before_compact, after_compact)
         
     Returns:
-        The circuit (without noise)
+        The compacted circuit (without noise), or tuple if return_both=True
     """
-    return generate_patch_rotation_circuit(k=config.k, manhattan_radius=2, basis=config.basis)
+    from compact_circuit import compact_and_delay_init
+    
+    # Generate circuit WITHOUT noise
+    circuit_before = generate_patch_rotation_circuit(k=config.k, manhattan_radius=2, basis=config.basis)
+    
+    # Compact the circuit (ASAP + ALAP scheduling)
+    circuit_after = compact_and_delay_init(circuit_before)
+    
+    if return_both:
+        return circuit_before, circuit_after
+    return circuit_after
+
+
+def calculate_graphlike_distance(circuit: stim.Circuit) -> int | None:
+    """Calculate the graph-like distance of a circuit."""
+    try:
+        shortest_error = circuit.shortest_graphlike_error(canonicalize_circuit_errors=True)
+        return len(shortest_error)
+    except Exception as e:
+        print(f"Error calculating graph-like distance: {e}")
+        return None
 
 
 def compute_distances_for_all_configs() -> dict[tuple[int, str], int]:
@@ -118,13 +138,25 @@ def compute_distances_for_all_configs() -> dict[tuple[int, str], int]:
     
     distances = {}
     
+    # Use a small noise model for distance calculation
+    # (distance calculation requires errors in the circuit)
+    distance_noise_model = NoiseModel.uniform_depolarizing(0.001)
+    
     for basis in BASIS_VALUES:
         for k in K_VALUES:
             config = CircuitConfig(k, basis)
-            print(f"\nComputing distance for {config}")
+            print(f"\nGenerating circuit: {config}")
             
-            # Use the compute_graphlike_distance function from patch_rotation_manual
-            distance = compute_graphlike_distance(k, basis=basis)
+            # Generate compacted circuit (without noise)
+            circuit = generate_circuit_for_config(config)
+            
+            # Add noise for distance calculation
+            noisy_circuit = distance_noise_model.noisy_circuit(circuit)
+            
+            print(f"  Qubits: {noisy_circuit.num_qubits}, Detectors: {noisy_circuit.num_detectors}")
+            
+            # Calculate distance
+            distance = calculate_graphlike_distance(noisy_circuit)
             distances[(k, basis)] = distance
             
             print(f"  Graph-like distance: {distance} (expected: {2*k+1})")
