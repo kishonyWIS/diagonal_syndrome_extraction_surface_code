@@ -430,7 +430,7 @@ def results_to_sinter_stats(results_data):
                 continue
             
             # Map circuit_type to display name
-            circuit_name = 'Standard' if circuit_type == 'standard' else 'Diagonal'
+            circuit_name = 'N/Z' if circuit_type == 'standard' else 'Diagonal'
             
             for noise_level, result in circuit_results.items():
                 # Create TaskStats object
@@ -479,15 +479,15 @@ def plot_logical_error_rates(data_dict, save_path="benchmark_plots/x_junction_er
     
     # Custom plot_args_func for combined plot
     def combined_plot_args(index, curve_id):
-        # curve_id is like "Standard k=1" or "Diagonal k=2"
+        # curve_id is like "N/Z k=1" or "Diagonal k=2"
         parts = curve_id.split()
-        circuit_type = parts[0]  # "Standard" or "Diagonal"
+        circuit_type = parts[0]  # "N/Z" or "Diagonal"
         k = int(parts[1].split('=')[1])  # Extract k value
         
         return {
             'color': k_colors.get(k, 'black'),
             'marker': k_markers.get(k, 'o'),
-            'linestyle': '--' if circuit_type == 'Standard' else '-',
+            'linestyle': '--' if circuit_type == 'N/Z' else '-',
         }
     
     sinter.plot_error_rate(
@@ -525,7 +525,7 @@ def compare_results(data_by_k, include_error_rates=False, shots=500000, noise_le
         data_by_k: Dict with structure {k_value: {'standard': results, 'diagonal': results}}
     """
     print("\n" + "=" * 60)
-    print("X-Junction Comparison: Standard vs Diagonal Schedule")
+    print("X-Junction Comparison: N/Z vs Diagonal Schedule")
     print("=" * 60)
     print()
     
@@ -535,7 +535,7 @@ def compare_results(data_by_k, include_error_rates=False, shots=500000, noise_le
     diagonal = k_1_data.get('diagonal')
     
     if standard and diagonal:
-        print(f"{'Metric':<30} {'Standard':<20} {'Diagonal':<20}")
+        print(f"{'Metric':<30} {'N/Z':<20} {'Diagonal':<20}")
         print("-" * 70)
         print(f"{'Graph-like distance':<30} {standard.get('graphlike_distance', 'N/A'):<20} {diagonal.get('graphlike_distance', 'N/A'):<20}")
         print(f"{'Number of instructions':<30} {standard.get('num_instructions', 'N/A'):<20} {diagonal.get('num_instructions', 'N/A'):<20}")
@@ -566,7 +566,7 @@ def compare_results(data_by_k, include_error_rates=False, shots=500000, noise_le
             all_error_rates[k] = {}
             
             if 'standard' in k_data and k_data['standard']:
-                print("\nStandard Circuit:")
+                print("\nN/Z Circuit:")
                 standard_error_rates = calculate_logical_error_rate(
                     k_data['standard']['circuit'], 
                     shots=shots, 
@@ -677,9 +677,9 @@ if __name__ == "__main__":
         print(f"Processing k={k}")
         print("=" * 60)
         
-        # Standard convention
+        # N/Z convention
         standard_result = compile_and_generate(
-            graph, "Standard Fixed-Bulk", FIXED_BULK_CONVENTION, k=k, use_diagonal=False
+            graph, "N/Z Fixed-Bulk", FIXED_BULK_CONVENTION, k=k, use_diagonal=False
         )
         
         # Diagonal convention
@@ -695,7 +695,7 @@ if __name__ == "__main__":
         # Collect Crumble URLs
         all_crumble_urls[k] = {}
         if standard_result:
-            all_crumble_urls[k]['Standard Fixed-Bulk'] = {
+            all_crumble_urls[k]['N/Z Fixed-Bulk'] = {
                 'before': standard_result.get('crumble_url_before'),
                 'after': standard_result.get('crumble_url_after')
             }

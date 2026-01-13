@@ -141,8 +141,8 @@ def plot_distance_vs_k(distance_data, save_path="distance_vs_k.pdf"):
     diagonal_distances = []
     
     for k in k_values:
-        if 'Standard Circuit' in distance_data[k] and distance_data[k]['Standard Circuit']['circuit'] != 'Error':
-            standard_distances.append(distance_data[k]['Standard Circuit']['circuit'])
+        if 'N/Z Circuit' in distance_data[k] and distance_data[k]['N/Z Circuit']['circuit'] != 'Error':
+            standard_distances.append(distance_data[k]['N/Z Circuit']['circuit'])
         else:
             standard_distances.append(None)
             
@@ -152,8 +152,8 @@ def plot_distance_vs_k(distance_data, save_path="distance_vs_k.pdf"):
             diagonal_distances.append(None)
     
     # Plot both circuit types
-    plt.plot(k_values, standard_distances, 'o--', color='blue', linewidth=2, markersize=8, 
-             label='Standard Circuit (fixed_bulk)', alpha=0.8)
+    plt.plot(k_values, standard_distances, 'o--', color='blue', linewidth=2, markersize=8,
+             label='N/Z Circuit (fixed_bulk)', alpha=0.8)
     plt.plot(k_values, diagonal_distances, 's-', color='red', linewidth=2, markersize=8, 
              label='Diagonal Circuit (diagonal_schedule)', alpha=0.8)
     
@@ -205,17 +205,17 @@ def plot_logical_error_rates_multi_k(results_data, save_path="logical_error_rate
     
     # Define line styles for different circuit types
     circuit_styles = {
-        'Standard Circuit': '--',
+        'N/Z Circuit': '--',
         'Diagonal Circuit': '-'
     }
-    
+
     # Define markers for different circuit types
     circuit_markers = {
-        'Standard Circuit': 'o',
+        'N/Z Circuit': 'o',
         'Diagonal Circuit': 's'
     }
-    
-    for circuit_name in ['Standard Circuit', 'Diagonal Circuit']:
+
+    for circuit_name in ['N/Z Circuit', 'Diagonal Circuit']:
         for k in sorted(results_data.keys()):
             if circuit_name in results_data[k]:
                 circuit_results = results_data[k][circuit_name]
@@ -319,7 +319,7 @@ def main():
     
     args = parser.parse_args()
     
-    print("=== Memory Experiment Comparison: Standard vs Diagonal Schedule Circuits ===")
+    print("=== Memory Experiment Comparison: N/Z vs Diagonal Schedule Circuits ===")
     import tqec.plaquette.constants as constants
     print(f"MEASUREMENT_SCHEDULE: {constants.MEASUREMENT_SCHEDULE} (default)")
     print("Using tqec conventions:")
@@ -345,10 +345,10 @@ def main():
     
     # Show plaquette configurations
     print("=== Plaquette Configurations ===")
-    print("Standard X-basis bulk: \"-x1- -x2- -x3- -x5-\" (schedule: [1,2,3,5])")
+    print("N/Z X-basis bulk: \"-x1- -x2- -x3- -x5-\" (schedule: [1,2,3,5])")
     print("Diagonal X-basis bulk: \"-x7- -x5- -x4- -x6-\" (schedule: [7,5,4,6])")
     print()
-    print("Standard Z-basis bulk: \"-z1- -z2- -z3- -z5-\" (schedule: [1,2,3,5])")
+    print("N/Z Z-basis bulk: \"-z1- -z2- -z3- -z5-\" (schedule: [1,2,3,5])")
     print("Diagonal Z-basis bulk: \"-z1- -z3- -z4- -z2-\" (schedule: [1,3,4,2])")
     print()
     
@@ -370,7 +370,7 @@ def main():
         
         # Store circuit info
         circuits = {
-            'Standard Circuit': standard_circuit,
+            'N/Z Circuit': standard_circuit,
             'Diagonal Circuit': diagonal_circuit
         }
         

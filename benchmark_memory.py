@@ -458,8 +458,8 @@ def plot_distance_vs_k(distance_data, save_path="benchmark_plots/memory_distance
     diagonal_distances = []
     
     for k in k_values:
-        if 'Original Circuit' in distance_data[k] and distance_data[k]['Original Circuit']['circuit'] != 'Error':
-            original_distances.append(distance_data[k]['Original Circuit']['circuit'])
+        if 'N/Z Circuit' in distance_data[k] and distance_data[k]['N/Z Circuit']['circuit'] != 'Error':
+            original_distances.append(distance_data[k]['N/Z Circuit']['circuit'])
         else:
             original_distances.append(None)
             
@@ -469,8 +469,8 @@ def plot_distance_vs_k(distance_data, save_path="benchmark_plots/memory_distance
             diagonal_distances.append(None)
     
     # Plot both circuit types
-    plt.plot(k_values, original_distances, 'o--', color='blue', linewidth=2, markersize=8, 
-             label='Original Circuit', alpha=0.8)
+    plt.plot(k_values, original_distances, 'o--', color='blue', linewidth=2, markersize=8,
+             label='N/Z Circuit', alpha=0.8)
     plt.plot(k_values, diagonal_distances, 's-', color='red', linewidth=2, markersize=8, 
              label='Diagonal Circuit', alpha=0.8)
     
@@ -570,13 +570,13 @@ def plot_logical_error_rates_multi_k(results_data, save_path="benchmark_plots/me
     def combined_plot_args(index, curve_id):
         # curve_id is like "Original k=1" or "Diagonal k=2"
         parts = curve_id.split()
-        circuit_type = parts[0]  # "Original" or "Diagonal"
+        circuit_type = parts[0]  # "N/Z" or "Diagonal"
         k = int(parts[1].split('=')[1])  # Extract k value
         
         return {
             'color': k_colors.get(k, 'black'),
             'marker': k_markers.get(k, 'o'),
-            'linestyle': '--' if circuit_type == 'Original' else '-',
+            'linestyle': '--' if circuit_type == 'N/Z' else '-',
         }
     
     sinter.plot_error_rate(
@@ -817,9 +817,9 @@ def save_crumble_urls_html(urls_dict, output_dir="crumble_urls", experiment_name
 
 
 def main():
-    """Main comparison function for original vs diagonal circuits."""
+    """Main comparison function for N/Z vs diagonal circuits."""
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description='Compare original vs diagonal surface code circuits')
+    parser = argparse.ArgumentParser(description='Compare N/Z vs diagonal surface code circuits')
     parser.add_argument('--k-values', nargs='+', type=int, default=[1, 2, 3],
                        help='k values to test (default: 1 2 3)')
     parser.add_argument('--shots', type=int, default=300000000,
@@ -868,7 +868,7 @@ def main():
         print("\nPlot-only mode complete!")
         return
     
-    print("=== Memory Experiment Comparison: Original vs Diagonal Circuits ===")
+    print("=== Memory Experiment Comparison: N/Z vs Diagonal Circuits ===")
     print(f"MEASUREMENT_SCHEDULE modified to: {constants.MEASUREMENT_SCHEDULE}")
     print("Using custom CSS compiler to handle qubit index 6")
     print()
@@ -940,13 +940,13 @@ def main():
         
         # Store circuit info (use compacted versions for simulation)
         circuits = {
-            'Original Circuit': original_circuit,
+            'N/Z Circuit': original_circuit,
             'Diagonal Circuit': diagonal_circuit
         }
         
         # Store both versions for Crumble URLs
         circuits_both = {
-            'Original Circuit': {'before': original_before, 'after': original_circuit},
+            'N/Z Circuit': {'before': original_before, 'after': original_circuit},
             'Diagonal Circuit': {'before': diagonal_before, 'after': diagonal_circuit}
         }
         
