@@ -1870,13 +1870,14 @@ def create_multi_cube_layers(
     template: QubitTemplate,
     cube_plaquettes: dict[tuple[int, int], tuple[Plaquettes, Plaquettes, Plaquettes]],
     scalable_shape: PhysicalQubitScalable2D = DEFAULT_SCALABLE_QUBIT_SHAPE,
+    num_cycles: int | None = None,
 ) -> SequencedLayers:
     """
     Create layers representing multiple cubes in a memory experiment.
     
     The layer structure is:
     - 1 initialization layer (with data qubit reset)
-    - 2k+1 bulk layers (syndrome extraction only)
+    - (num_cycles - 2) bulk layers (syndrome extraction only)
     - 1 measurement layer (with data qubit readout)
     
     Args:
@@ -1884,6 +1885,8 @@ def create_multi_cube_layers(
         cube_plaquettes: Dict mapping (x, y) block positions to 
                         (init_plaquettes, bulk_plaquettes, meas_plaquettes) tuples
         scalable_shape: The scalable qubit shape
+        num_cycles: Total number of syndrome extraction cycles. If None, uses 2k+1 (default).
+                   Must be at least 2 (init + meas).
         
     Returns:
         A SequencedLayers containing the layer structure with LayoutLayer leaves
@@ -1903,13 +1906,22 @@ def create_multi_cube_layers(
     bulk_layout = plaquette_layers_to_layout_layer(bulk_layers, scalable_shape)
     meas_layout = plaquette_layers_to_layout_layer(meas_layers, scalable_shape)
     
+    # Determine bulk repetitions
+    # Total cycles = 1 (init) + bulk_reps (bulk) + 1 (meas)
+    # Default: 2k+1 cycles => bulk_reps = 2k-1
+    if num_cycles is None:
+        bulk_repetitions = LinearFunction(2, -1)  # 2k-1 repetitions (default)
+    else:
+        # Use LinearFunction with slope=0 for constant repetitions
+        bulk_reps = max(0, num_cycles - 2)
+        bulk_repetitions = LinearFunction(0, bulk_reps)  # constant bulk_reps cycles
+    
     # Create layer structure with RepeatedLayer for bulk
-    # Total cycles = 1 (init) + (2k-1) (bulk) + 1 (meas) = 2k+1
     layers = [
         init_layout,
         RepeatedLayer(
             bulk_layout,
-            repetitions=LinearFunction(2, -1),  # 2k-1 repetitions
+            repetitions=bulk_repetitions,
         ),
         meas_layout,
     ]
@@ -1970,6 +1982,7 @@ def generate_two_cube_circuit(
     measure_shared_data: bool = False,
     measure_shared_data_final_only: bool = False,
     manhattan_radius: int = 2,
+    num_cycles: int | None = None,
 ) -> stim.Circuit:
     """
     Generate a circuit with two decoupled cubes:
@@ -1990,6 +2003,7 @@ def generate_two_cube_circuit(
         measure_shared_data: If True, measure the shared data qubits at the boundary in Z basis
         measure_shared_data_final_only: If True, only measure shared data in the final (meas) layer
         manhattan_radius: Parameter for automatic detector computation. Set to 0 to disable.
+        num_cycles: Total number of syndrome extraction cycles. If None, uses 2k+1 (default).
         
     Returns:
         Complete stim circuit with detectors and observables for both cubes
@@ -2059,7 +2073,7 @@ def generate_two_cube_circuit(
     }
     
     # Create the layer structure
-    layers = create_multi_cube_layers(template, cube_plaquettes)
+    layers = create_multi_cube_layers(template, cube_plaquettes, num_cycles=num_cycles)
     
     # Create a single combined observable for the merged blocks
     # The logical observable is the product of measurements from both cubes
@@ -2147,6 +2161,7 @@ def generate_two_cube_circuit_y_axis(
     measure_shared_data: bool = False,
     measure_shared_data_final_only: bool = False,
     manhattan_radius: int = 2,
+    num_cycles: int | None = None,
 ) -> stim.Circuit:
     """
     Generate a Y-axis oriented spatial Hadamard circuit with two cubes:
@@ -2169,6 +2184,7 @@ def generate_two_cube_circuit_y_axis(
         measure_shared_data: If True, measure the shared data qubits at the boundary in Z basis
         measure_shared_data_final_only: If True, only measure shared data in the final (meas) layer
         manhattan_radius: Parameter for automatic detector computation. Set to 0 to disable.
+        num_cycles: Total number of syndrome extraction cycles. If None, uses 2k+1 (default).
         
     Returns:
         Complete stim circuit with detectors and observables for both cubes
@@ -2236,7 +2252,7 @@ def generate_two_cube_circuit_y_axis(
     }
     
     # Create the layer structure
-    layers = create_multi_cube_layers(template, cube_plaquettes)
+    layers = create_multi_cube_layers(template, cube_plaquettes, num_cycles=num_cycles)
     
     # Create a single combined observable for the merged blocks
     # For Y-axis: XZZ stores Z (read Z at end), ZXX stores X (read X at end)
@@ -2292,6 +2308,7 @@ def generate_spatial_hadamard_circuit(
     noise_model: NoiseModel | None = None,
     measure_shared_data_final_only: bool = False,
     flag_config: str | None = None,
+    num_cycles: int | None = None,
 ) -> stim.Circuit:
     """
     Generate a spatial Hadamard circuit with two cubes along the specified axis.
@@ -2320,6 +2337,8 @@ def generate_spatial_hadamard_circuit(
             - 'partial': flags measured only in final round (measure_shared_data_final_only=True)
             - 'none': no flags at all (measure_coupling_aux_mz=False, measure_shared_data=False)
             - None: use measure_shared_data_final_only parameter for backwards compatibility
+        num_cycles: Total number of syndrome extraction cycles. If None, uses 2k+1 (default).
+                   Use a smaller value (e.g., 2 or 3) for faster distance calculations.
         
     Returns:
         Complete stim circuit with:
@@ -2364,6 +2383,7 @@ def generate_spatial_hadamard_circuit(
         measure_shared_data=False,
         measure_shared_data_final_only=measure_shared_data_final_only,
         manhattan_radius=2,
+        num_cycles=num_cycles,
     )
     
     # Step 2: Generate circuit WITH stretched stabilizer measurements
@@ -2376,6 +2396,7 @@ def generate_spatial_hadamard_circuit(
         measure_shared_data=include_shared_data,
         measure_shared_data_final_only=measure_shared_data_final_only,
         manhattan_radius=0,
+        num_cycles=num_cycles,
     )
     
     # Step 3: Map detectors and add flag detectors

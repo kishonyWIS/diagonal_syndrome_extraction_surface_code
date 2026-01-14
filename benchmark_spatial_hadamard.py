@@ -52,17 +52,17 @@ DIRECTIONS = ['x', 'y']
 #   'none': no flags at all (measure_coupling_aux_mz=False, measure_shared_data=False)
 FLAG_CONFIGS = ['none', 'partial', 'all']
 K_VALUES = [1, 2, 3]
-PHYSICAL_ERROR_RATES = np.logspace(-3.5, -2, 7)  # ~[0.000316, 0.001, 0.00316, 0.01]
-DECODERS = ['pymatching', 'correlated_pymatching', 'tesseract']
+PHYSICAL_ERROR_RATES = np.logspace(-4, -2, 9)[:2]  # ~[0.000316, 0.001, 0.00316, 0.01]
+DECODERS = ['pymatching', 'correlated_pymatching']#, 'tesseract']
 
 # Sampling configuration
-MAX_SHOTS = 100_000_000
+MAX_SHOTS = 1000_000_000
 MAX_ERRORS = 3000
 NUM_WORKERS = 10
 RANDOM_SEED = 42
 
 # Output file
-OUTPUT_CSV = 'benchmark_data/spatial_hadamard_benchmark.csv'
+OUTPUT_CSV = 'benchmark_data/spatial_hadamard_lower_error_rates_benchmark.csv'
 
 
 # =============================================================================
@@ -961,9 +961,9 @@ def main():
                 except Exception as e:
                     print(f"  Error generating URLs for {config_str}: {e}")
     
-    # Save Crumble URLs to HTML
-    if all_crumble_urls:
-        save_crumble_urls_html(all_crumble_urls, output_dir="crumble_urls", experiment_name="spatial_hadamard")
+    # # Save Crumble URLs to HTML
+    # if all_crumble_urls:
+    #     save_crumble_urls_html(all_crumble_urls, output_dir="crumble_urls", experiment_name="spatial_hadamard")
     
     # Run benchmark with distance calculation enabled
     # Results are saved incrementally to CSV after each configuration
