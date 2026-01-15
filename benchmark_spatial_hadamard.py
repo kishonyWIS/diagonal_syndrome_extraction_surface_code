@@ -687,6 +687,79 @@ def results_to_sinter_stats(results: list[dict], decoder_filter: str = None) -> 
     return stats_list
 
 
+def plot_single_direction(
+    stats_list: list,
+    direction: str,
+    decoder: str,
+    save_path: str,
+    k_colors: dict,
+    flag_markers: dict,
+    flag_styles: dict,
+    flag_order: dict,
+):
+    """Plot logical error rates for a single direction as a standalone figure.
+    
+    Args:
+        stats_list: List of sinter.TaskStats objects
+        direction: 'x' or 'y'
+        decoder: Decoder name (for title)
+        save_path: Path to save the plot
+        k_colors: Dict mapping k values to colors
+        flag_markers: Dict mapping flag_config to markers
+        flag_styles: Dict mapping flag_config to linestyles
+        flag_order: Dict mapping flag_config to sort order
+    """
+    # Filter stats for this direction
+    direction_stats = [s for s in stats_list if s.json_metadata['direction'] == direction]
+    
+    if not direction_stats:
+        return
+    
+    def plot_args_func(index, curve_id):
+        parts = curve_id.split()
+        flag_config = parts[0].split('_')[1] if '_' in parts[0] else parts[0]
+        k = int(parts[1].split('=')[1])
+        return {
+            'color': k_colors.get(k, 'black'),
+            'marker': flag_markers.get(flag_config, 'o'),
+            'linestyle': flag_styles.get(flag_config, '-'),
+        }
+    
+    # Create standalone figure
+    fig, ax = plt.subplots(figsize=(10, 8))
+    
+    sinter.plot_error_rate(
+        ax=ax,
+        stats=direction_stats,
+        x_func=lambda s: s.json_metadata['p'],
+        group_func=lambda s: f"{flag_order[s.json_metadata['flag_config']]}_{s.json_metadata['flag_config']} k={s.json_metadata['k']}",
+        plot_args_func=plot_args_func,
+    )
+    
+    # Fix legend labels by removing the sort prefix
+    handles, labels = ax.get_legend_handles_labels()
+    new_labels = [label.split('_', 1)[1] if '_' in label else label for label in labels]
+    ax.legend(handles, new_labels, fontsize=18, ncol=3, loc='upper left', columnspacing=0.5, handletextpad=0.3)
+    
+    ax.loglog()
+    ax.set_xlabel("Physical Error Rate", fontsize=22)
+    ax.set_ylabel("Logical Error Rate", fontsize=22)
+    ax.tick_params(axis='both', which='major', labelsize=22)
+    ax.tick_params(axis='both', which='minor', labelsize=22)
+    ax.grid(which='major', alpha=0.5)
+    ax.grid(which='minor', alpha=0.2)
+    # No title for standalone figures
+    
+    fig.set_dpi(150)
+    fig.tight_layout()
+    
+    # Save plot
+    fig.savefig(save_path, dpi=300, bbox_inches='tight')
+    print(f"Saved standalone {direction}-direction plot to {save_path}")
+    
+    plt.close()
+
+
 def plot_error_rates(
     results: list[dict],
     decoder: str = 'pymatching',
@@ -695,6 +768,7 @@ def plot_error_rates(
     """Plot logical error rates using sinter.plot_error_rate.
     
     Creates two panels: one for x direction, one for y direction.
+    Also saves each panel as a standalone PDF file.
     Groups by (flag_config, k) with consistent styling.
     
     Args:
@@ -720,6 +794,24 @@ def plot_error_rates(
     # Define linestyles by flag_config (since direction is now in separate panels)
     flag_styles = {'all': '-', 'partial': '--', 'none': ':'}
     
+    # Define the desired order for flag_config (used for sorting legend)
+    flag_order = {'none': '0', 'partial': '1', 'all': '2'}
+    
+    # Generate standalone plots for each direction
+    base_path = save_path.rsplit('.', 1)[0]  # Remove extension
+    for direction in ['x', 'y']:
+        standalone_path = f"{base_path}_{direction}_direction.pdf"
+        plot_single_direction(
+            stats_list=stats_list,
+            direction=direction,
+            decoder=decoder,
+            save_path=standalone_path,
+            k_colors=k_colors,
+            flag_markers=flag_markers,
+            flag_styles=flag_styles,
+            flag_order=flag_order,
+        )
+    
     # Create figure with two panels, sharing y-axis
     fig, axes = plt.subplots(1, 2, figsize=(18, 8), sharey=True)
     
@@ -735,9 +827,6 @@ def plot_error_rates(
             'marker': flag_markers.get(flag_config, 'o'),
             'linestyle': flag_styles.get(flag_config, '-'),
         }
-    
-    # Define the desired order for flag_config (used for sorting legend)
-    flag_order = {'none': '0', 'partial': '1', 'all': '2'}
     
     # Plot for each direction
     for i, (ax, direction) in enumerate(zip(axes, ['x', 'y'])):
@@ -760,24 +849,24 @@ def plot_error_rates(
         # Fix legend labels by removing the sort prefix
         handles, labels = ax.get_legend_handles_labels()
         new_labels = [label.split('_', 1)[1] if '_' in label else label for label in labels]
-        ax.legend(handles, new_labels, fontsize=12, ncol=3, loc='best')
+        ax.legend(handles, new_labels, fontsize=18, ncol=3, loc='upper left', columnspacing=0.5, handletextpad=0.3)
         
         ax.loglog()
-        ax.set_xlabel("Physical Error Rate (Uniform Depolarizing)", fontsize=16)
+        ax.set_xlabel("Physical Error Rate", fontsize=22)
         if i == 0:  # Only set ylabel on left panel
-            ax.set_ylabel("Logical Error Rate (per Shot)", fontsize=16)
-        ax.tick_params(axis='both', which='major', labelsize=14)
-        ax.tick_params(axis='both', which='minor', labelsize=12)
+            ax.set_ylabel("Logical Error Rate", fontsize=22)
+        ax.tick_params(axis='both', which='major', labelsize=22)
+        ax.tick_params(axis='both', which='minor', labelsize=22)
         ax.grid(which='major', alpha=0.5)
         ax.grid(which='minor', alpha=0.2)
-        ax.set_title(f"{direction} direction", fontsize=16)
+        ax.set_title(f"{direction} direction", fontsize=20)
     
     fig.set_dpi(150)
     fig.tight_layout()
     
     # Save plot
     fig.savefig(save_path, dpi=300, bbox_inches='tight')
-    print(f"Saved error rate plot to {save_path}")
+    print(f"Saved combined error rate plot to {save_path}")
     
     plt.close()
     

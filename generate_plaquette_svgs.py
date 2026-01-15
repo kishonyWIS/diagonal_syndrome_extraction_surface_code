@@ -46,6 +46,87 @@ def _patched_get_interaction_order_text(self, configuration: DrawerConfiguration
 RPNGPlaquetteDrawer.get_interaction_order_text = _patched_get_interaction_order_text
 
 
+def create_schedule_order_line(schedule: list[int], config: DrawerConfiguration) -> svg.G:
+    """Create a polyline connecting corners in schedule order with an arrow at the end.
+    
+    Args:
+        schedule: List of 4 schedule numbers [tl, tr, bl, br]
+        config: Drawing configuration
+        
+    Returns:
+        SVG group containing the polyline with arrow marker
+    """
+    # Corner positions (in plaquette coordinates 0-1)
+    # Order: [tl, tr, bl, br]
+    corner_positions = [
+        complex(0, 0),      # top-left
+        complex(1, 0),      # top-right
+        complex(0, 1),      # bottom-left
+        complex(1, 1),      # bottom-right
+    ]
+    
+    center = complex(0.5, 0.5)
+    lerp_coef = config.hook_error_line_lerp_coefficient
+    
+    # Get lerped positions (same as hook error line positions)
+    lerped_positions = [lerp(center, corner, lerp_coef) for corner in corner_positions]
+    
+    # Create list of (schedule_time, position, corner_index) and sort by schedule time
+    schedule_with_pos = []
+    for i, (sched_time, pos) in enumerate(zip(schedule, lerped_positions)):
+        schedule_with_pos.append((sched_time, pos, i))
+    
+    # Sort by schedule time
+    schedule_with_pos.sort(key=lambda x: x[0])
+    
+    # Extract the ordered positions
+    ordered_positions = [item[1] for item in schedule_with_pos]
+    
+    # Shorten the final edge so the arrow doesn't block the last number
+    # Move the last point 30% back along the final edge
+    if len(ordered_positions) >= 2:
+        last_pos = ordered_positions[-1]
+        second_last_pos = ordered_positions[-2]
+        # Interpolate: new_last = second_last + 0.7 * (last - second_last)
+        shortened_last = second_last_pos + 0.95 * (last_pos - second_last_pos)
+        ordered_positions[-1] = shortened_last
+    
+    # Create polyline points
+    points = [f"{pos.real},{pos.imag}" for pos in ordered_positions]
+    points_str = " ".join(points)
+    
+    # Create arrow marker definition
+    arrow_marker = svg.Marker(
+        id="arrow",
+        viewBox="0 0 10 10",
+        refX=5,
+        refY=5,
+        markerWidth=6,
+        markerHeight=6,
+        orient="auto-start-reverse",
+        elements=[
+            svg.Path(
+                d="M 0 0 L 10 5 L 0 10 z",
+                fill="black",
+            )
+        ]
+    )
+    
+    # Create defs element for the marker
+    defs = svg.Defs(elements=[arrow_marker])
+    
+    # Create the polyline with arrow marker at the end
+    polyline = svg.Polyline(
+        points=points_str,
+        fill="none",
+        stroke="black",
+        stroke_width=config.stroke_width,
+        marker_end="url(#arrow)",
+    )
+    
+    return svg.G(elements=[defs, polyline])
+
+
 def create_plaquette_pdf(
     filename: str,
     basis: str,
@@ -53,13 +134,13 @@ def create_plaquette_pdf(
     hook_orientation: str = "horizontal",
     size: int = 100,
 ):
-    """Create a PDF plaquette with schedule numbers and hook error line using TQEC style.
+    """Create a PDF plaquette with schedule numbers and schedule order line using TQEC style.
     
     Args:
         filename: Output PDF filename
         basis: 'X' or 'Z' - determines color
         schedule: List of 4 schedule numbers [tl, tr, bl, br]
-        hook_orientation: 'horizontal' or 'vertical' - direction of hook error line
+        hook_orientation: 'horizontal', 'vertical', or 'diagonal' - for reference only
         size: Size of the square in pixels
     """
     # Create RPNG description string: "-{basis}{schedule}-" for each corner
@@ -79,14 +160,17 @@ def create_plaquette_pdf(
         stroke_width=0.02,
     )
     
-    # Draw the plaquette
+    # Draw the plaquette WITHOUT the default hook error line
     plaquette_svg = drawer.draw(
         id=f"plaquette_{basis}",
         show_interaction_order=True,
-        show_hook_errors=True,
+        show_hook_errors=False,  # Disable default hook error line
         show_data_qubit_reset_measurements=False,
         configuration=config,
     )
+    
+    # Create custom schedule order line with arrow
+    schedule_line = create_schedule_order_line(schedule, config)
     
     # Create a complete SVG with viewBox
     margin = 0.1
@@ -97,7 +181,7 @@ def create_plaquette_pdf(
         width=size,
         height=size,
         viewBox=viewbox,
-        elements=[plaquette_svg],
+        elements=[plaquette_svg, schedule_line],
     )
     
     svg_string = str(full_svg)

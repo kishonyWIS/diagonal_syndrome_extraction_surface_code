@@ -283,7 +283,12 @@ def create_custom_arm_shape(
         if position == 'top':
             # Upper half: narrow at TOP (y=0), wider at BOTTOM (y=1, at interface)
             path_d = f"M {narrow_left} 0 L {right_edge} 0 L {right_edge} 1 L {wide_left} 1 Z"
-            elements.append(svg_module.Path(d=path_d, fill=fill, stroke=stroke_color, stroke_width=stroke_width))
+            # Draw fill without stroke
+            elements.append(svg_module.Path(d=path_d, fill=fill, stroke="none"))
+            # Draw only non-interface edges (top, right, and diagonal left - skip bottom)
+            elements.append(svg_module.Line(x1=narrow_left, y1=0, x2=right_edge, y2=0, stroke=stroke_color, stroke_width=stroke_width))
+            elements.append(svg_module.Line(x1=right_edge, y1=0, x2=right_edge, y2=1, stroke=stroke_color, stroke_width=stroke_width))
+            elements.append(svg_module.Line(x1=narrow_left, y1=0, x2=wide_left, y2=1, stroke=stroke_color, stroke_width=stroke_width))
             # Schedule number at top-right corner
             elements.append(svg_module.Text(
                 x=text_near_edge, y=text_far_edge, fill="black", font_size=configuration.font_size,
@@ -292,7 +297,12 @@ def create_custom_arm_shape(
         else:  # bottom
             # Lower half: wider at TOP (y=0, at interface), narrow at BOTTOM (y=1)
             path_d = f"M {wide_left} 0 L {right_edge} 0 L {right_edge} 1 L {narrow_left} 1 Z"
-            elements.append(svg_module.Path(d=path_d, fill=fill, stroke=stroke_color, stroke_width=stroke_width))
+            # Draw fill without stroke
+            elements.append(svg_module.Path(d=path_d, fill=fill, stroke="none"))
+            # Draw only non-interface edges (right, bottom, and diagonal left - skip top)
+            elements.append(svg_module.Line(x1=right_edge, y1=0, x2=right_edge, y2=1, stroke=stroke_color, stroke_width=stroke_width))
+            elements.append(svg_module.Line(x1=right_edge, y1=1, x2=narrow_left, y2=1, stroke=stroke_color, stroke_width=stroke_width))
+            elements.append(svg_module.Line(x1=narrow_left, y1=1, x2=wide_left, y2=0, stroke=stroke_color, stroke_width=stroke_width))
             # Schedule number at bottom-right corner
             elements.append(svg_module.Text(
                 x=text_near_edge, y=text_near_edge, fill="black", font_size=configuration.font_size,
@@ -309,9 +319,13 @@ def create_custom_arm_shape(
         hook_right_x = center + hook_line_coef * (right_edge - center)  # 0.9
         
         if position == 'top':
-            # Full rectangle
+            # Full rectangle - draw fill without stroke
             path_d = f"M {left_edge} 0 L {right_edge} 0 L {right_edge} 1 L {left_edge} 1 Z"
-            elements.append(svg_module.Path(d=path_d, fill=fill, stroke=stroke_color, stroke_width=stroke_width))
+            elements.append(svg_module.Path(d=path_d, fill=fill, stroke="none"))
+            # Draw only non-interface edges (top, left, right - skip bottom)
+            elements.append(svg_module.Line(x1=left_edge, y1=0, x2=right_edge, y2=0, stroke=stroke_color, stroke_width=stroke_width))
+            elements.append(svg_module.Line(x1=left_edge, y1=0, x2=left_edge, y2=1, stroke=stroke_color, stroke_width=stroke_width))
+            elements.append(svg_module.Line(x1=right_edge, y1=0, x2=right_edge, y2=1, stroke=stroke_color, stroke_width=stroke_width))
             
             # Hook error line between top corners (dashed)
             hook_y = center + hook_line_coef * (0 - center)  # 0.1
@@ -331,9 +345,13 @@ def create_custom_arm_shape(
                 text_anchor="middle", dominant_baseline="central", text=str(right_time),
             ))
         else:  # bottom
-            # Full rectangle
+            # Full rectangle - draw fill without stroke
             path_d = f"M {left_edge} 0 L {right_edge} 0 L {right_edge} 1 L {left_edge} 1 Z"
-            elements.append(svg_module.Path(d=path_d, fill=fill, stroke=stroke_color, stroke_width=stroke_width))
+            elements.append(svg_module.Path(d=path_d, fill=fill, stroke="none"))
+            # Draw only non-interface edges (bottom, left, right - skip top)
+            elements.append(svg_module.Line(x1=left_edge, y1=1, x2=right_edge, y2=1, stroke=stroke_color, stroke_width=stroke_width))
+            elements.append(svg_module.Line(x1=left_edge, y1=0, x2=left_edge, y2=1, stroke=stroke_color, stroke_width=stroke_width))
+            elements.append(svg_module.Line(x1=right_edge, y1=0, x2=right_edge, y2=1, stroke=stroke_color, stroke_width=stroke_width))
             
             # Hook error line between bottom corners (dashed)
             hook_y = center + hook_line_coef * (1 - center)  # 0.9
@@ -437,7 +455,12 @@ def create_custom_arm_shape_x_axis(
             # Left half: narrow at top-left (x=0), wider at top-right (x=1, toward interface)
             # Bottom edge is full width
             path_d = f"M 0 {narrow_y} L 0 {bottom_edge} L 1 {bottom_edge} L 1 {wide_y} Z"
-            elements.append(svg_module.Path(d=path_d, fill=fill, stroke=stroke_color, stroke_width=stroke_width))
+            # Draw fill without stroke
+            elements.append(svg_module.Path(d=path_d, fill=fill, stroke="none"))
+            # Draw only non-interface edges (left, bottom, and diagonal top - skip right)
+            elements.append(svg_module.Line(x1=0, y1=narrow_y, x2=0, y2=bottom_edge, stroke=stroke_color, stroke_width=stroke_width))
+            elements.append(svg_module.Line(x1=0, y1=bottom_edge, x2=1, y2=bottom_edge, stroke=stroke_color, stroke_width=stroke_width))
+            elements.append(svg_module.Line(x1=0, y1=narrow_y, x2=1, y2=wide_y, stroke=stroke_color, stroke_width=stroke_width))
             # Schedule number at bottom-left corner (where the data qubit is)
             elements.append(svg_module.Text(
                 x=text_far_edge, y=text_near_edge, fill="black", font_size=configuration.font_size,
@@ -447,7 +470,12 @@ def create_custom_arm_shape_x_axis(
             # Right half: wider at top-left (x=0, toward interface), narrow at top-right (x=1)
             # Bottom edge is full width
             path_d = f"M 0 {wide_y} L 0 {bottom_edge} L 1 {bottom_edge} L 1 {narrow_y} Z"
-            elements.append(svg_module.Path(d=path_d, fill=fill, stroke=stroke_color, stroke_width=stroke_width))
+            # Draw fill without stroke
+            elements.append(svg_module.Path(d=path_d, fill=fill, stroke="none"))
+            # Draw only non-interface edges (right, bottom, and diagonal top - skip left)
+            elements.append(svg_module.Line(x1=1, y1=narrow_y, x2=1, y2=bottom_edge, stroke=stroke_color, stroke_width=stroke_width))
+            elements.append(svg_module.Line(x1=0, y1=bottom_edge, x2=1, y2=bottom_edge, stroke=stroke_color, stroke_width=stroke_width))
+            elements.append(svg_module.Line(x1=0, y1=wide_y, x2=1, y2=narrow_y, stroke=stroke_color, stroke_width=stroke_width))
             # Schedule number at bottom-right corner (where the data qubit is)
             elements.append(svg_module.Text(
                 x=text_near_edge, y=text_near_edge, fill="black", font_size=configuration.font_size,
@@ -464,9 +492,13 @@ def create_custom_arm_shape_x_axis(
         hook_bottom_y = center + hook_line_coef * (bottom_edge - center)
         
         if position == 'left':
-            # Full rectangle
+            # Full rectangle - draw fill without stroke
             path_d = f"M 0 0 L 1 0 L 1 1 L 0 1 Z"
-            elements.append(svg_module.Path(d=path_d, fill=fill, stroke=stroke_color, stroke_width=stroke_width))
+            elements.append(svg_module.Path(d=path_d, fill=fill, stroke="none"))
+            # Draw only non-interface edges (top, bottom, left - skip right)
+            elements.append(svg_module.Line(x1=0, y1=0, x2=1, y2=0, stroke=stroke_color, stroke_width=stroke_width))
+            elements.append(svg_module.Line(x1=0, y1=1, x2=1, y2=1, stroke=stroke_color, stroke_width=stroke_width))
+            elements.append(svg_module.Line(x1=0, y1=0, x2=0, y2=1, stroke=stroke_color, stroke_width=stroke_width))
             
             # Hook error line between left corners (dashed, vertical)
             hook_x = center + hook_line_coef * (0 - center)  # 0.1
@@ -486,9 +518,13 @@ def create_custom_arm_shape_x_axis(
                 text_anchor="middle", dominant_baseline="central", text=str(bottom_time),
             ))
         else:  # right
-            # Full rectangle
+            # Full rectangle - draw fill without stroke
             path_d = f"M 0 0 L 1 0 L 1 1 L 0 1 Z"
-            elements.append(svg_module.Path(d=path_d, fill=fill, stroke=stroke_color, stroke_width=stroke_width))
+            elements.append(svg_module.Path(d=path_d, fill=fill, stroke="none"))
+            # Draw only non-interface edges (top, bottom, right - skip left)
+            elements.append(svg_module.Line(x1=0, y1=0, x2=1, y2=0, stroke=stroke_color, stroke_width=stroke_width))
+            elements.append(svg_module.Line(x1=0, y1=1, x2=1, y2=1, stroke=stroke_color, stroke_width=stroke_width))
+            elements.append(svg_module.Line(x1=1, y1=0, x2=1, y2=1, stroke=stroke_color, stroke_width=stroke_width))
             
             # Hook error line between right corners (dashed, vertical)
             hook_x = center + hook_line_coef * (1 - center)  # 0.9

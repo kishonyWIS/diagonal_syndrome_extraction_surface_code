@@ -472,10 +472,70 @@ def results_to_sinter_stats(results: list[dict]) -> list[sinter.TaskStats]:
     return stats_list
 
 
+def plot_single_basis(
+    stats_list: list,
+    basis: str,
+    save_path: str,
+    k_colors: dict,
+):
+    """Plot logical error rates for a single basis as a standalone figure.
+    
+    Args:
+        stats_list: List of sinter.TaskStats objects
+        basis: 'z' or 'x'
+        save_path: Path to save the plot
+        k_colors: Dict mapping k values to colors
+    """
+    # Filter stats for this basis
+    basis_stats = [s for s in stats_list if s.json_metadata['basis'] == basis]
+    
+    if not basis_stats:
+        return
+    
+    def plot_args_func(index, curve_id):
+        k = int(curve_id.split('=')[1])
+        return {
+            'color': k_colors.get(k, 'black'),
+            'marker': 'o',
+            'linestyle': '-',
+        }
+    
+    # Create standalone figure
+    fig, ax = plt.subplots(figsize=(10, 8))
+    
+    sinter.plot_error_rate(
+        ax=ax,
+        stats=basis_stats,
+        x_func=lambda s: s.json_metadata['p'],
+        group_func=lambda s: f"k={s.json_metadata['k']}",
+        plot_args_func=plot_args_func,
+    )
+    
+    ax.legend(fontsize=22, loc='upper left')
+    ax.loglog()
+    ax.set_xlabel("Physical Error Rate", fontsize=22)
+    ax.set_ylabel("Logical Error Rate", fontsize=22)
+    ax.tick_params(axis='both', which='major', labelsize=22)
+    ax.tick_params(axis='both', which='minor', labelsize=22)
+    ax.grid(which='major', alpha=0.5)
+    ax.grid(which='minor', alpha=0.2)
+    # No title for standalone figures
+    
+    fig.set_dpi(150)
+    fig.tight_layout()
+    
+    # Save plot
+    fig.savefig(save_path, dpi=300, bbox_inches='tight')
+    print(f"Saved standalone {basis}-basis plot to {save_path}")
+    
+    plt.close()
+
+
 def plot_results(results: list[BenchmarkResult], output_dir: str = 'benchmark_plots') -> None:
     """Generate plots from benchmark results using sinter.plot_error_rate.
     
     Creates two panels: one for z basis, one for x basis.
+    Also saves each panel as a standalone PDF file.
     Groups by k value with consistent styling.
     """
     os.makedirs(output_dir, exist_ok=True)
@@ -502,6 +562,16 @@ def plot_results(results: list[BenchmarkResult], output_dir: str = 'benchmark_pl
     
     # Define colors by k value
     k_colors = {1: 'C0', 2: 'C1', 3: 'C2', 4: 'C3', 5: 'C4'}
+    
+    # Generate standalone plots for each basis
+    for basis in ['z', 'x']:
+        standalone_path = os.path.join(output_dir, f'patch_rotation_benchmark_{basis}_basis.pdf')
+        plot_single_basis(
+            stats_list=stats_list,
+            basis=basis,
+            save_path=standalone_path,
+            k_colors=k_colors,
+        )
     
     # Create figure with two panels, sharing y-axis
     fig, axes = plt.subplots(1, 2, figsize=(16, 7), sharey=True)
@@ -531,24 +601,24 @@ def plot_results(results: list[BenchmarkResult], output_dir: str = 'benchmark_pl
             plot_args_func=plot_args_func,
         )
         
-        ax.legend(fontsize=12, loc='best')
+        ax.legend(fontsize=22, loc='upper left')
         ax.loglog()
-        ax.set_xlabel("Physical Error Rate (Uniform Depolarizing)", fontsize=16)
+        ax.set_xlabel("Physical Error Rate", fontsize=22)
         if i == 0:  # Only set ylabel on left panel
-            ax.set_ylabel("Logical Error Rate (per Shot)", fontsize=16)
-        ax.tick_params(axis='both', which='major', labelsize=14)
-        ax.tick_params(axis='both', which='minor', labelsize=12)
+            ax.set_ylabel("Logical Error Rate", fontsize=22)
+        ax.tick_params(axis='both', which='major', labelsize=22)
+        ax.tick_params(axis='both', which='minor', labelsize=22)
         ax.grid(which='major', alpha=0.5)
         ax.grid(which='minor', alpha=0.2)
-        ax.set_title(f"Basis: {basis.upper()}", fontsize=16)
+        ax.set_title(f"Basis: {basis.upper()}", fontsize=20)
     
     fig.set_dpi(150)
     fig.tight_layout()
     
-    # Save plot as PDF
+    # Save combined plot as PDF
     plot_path = os.path.join(output_dir, 'patch_rotation_benchmark.pdf')
     fig.savefig(plot_path, dpi=300, bbox_inches='tight')
-    print(f"Saved plot to {plot_path}")
+    print(f"Saved combined plot to {plot_path}")
     plt.close()
 
 

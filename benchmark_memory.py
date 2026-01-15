@@ -564,7 +564,7 @@ def plot_logical_error_rates_multi_k(results_data, save_path="benchmark_plots/me
     k_markers = {1: 'o', 2: 's', 3: '^', 4: 'D', 5: 'v'}
     
     # Create combined comparison plot
-    fig, ax = plt.subplots(1, 1, figsize=(12, 9))
+    fig, ax = plt.subplots(1, 1, figsize=(10, 8))
     
     # Custom plot_args_func for combined plot
     def combined_plot_args(index, curve_id):
@@ -588,13 +588,13 @@ def plot_logical_error_rates_multi_k(results_data, save_path="benchmark_plots/me
     )
     
     ax.loglog()
-    ax.set_xlabel("Physical Error Rate (Uniform Depolarizing)", fontsize=16)
-    ax.set_ylabel("Logical Error Rate (per Shot)", fontsize=16)
-    ax.tick_params(axis='both', which='major', labelsize=14)
-    ax.tick_params(axis='both', which='minor', labelsize=12)
+    ax.set_xlabel("Physical Error Rate", fontsize=22)
+    ax.set_ylabel("Logical Error Rate", fontsize=22)
+    ax.tick_params(axis='both', which='major', labelsize=22)
+    ax.tick_params(axis='both', which='minor', labelsize=22)
     ax.grid(which='major', alpha=0.5)
     ax.grid(which='minor', alpha=0.2)
-    ax.legend(fontsize=14, ncol=2)
+    ax.legend(fontsize=22, ncol=2, loc='upper left')
     fig.set_dpi(150)
     fig.tight_layout()
     
