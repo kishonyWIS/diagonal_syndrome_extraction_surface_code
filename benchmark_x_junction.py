@@ -259,7 +259,7 @@ def calculate_logical_error_rate(circuit, shots=50000, noise_levels=[0.001, 0.00
 # CSV Data Saving/Loading
 # =============================================================================
 
-def save_error_rates_to_csv(all_error_rates, filepath="benchmark_data/x_junction_error_rates.csv"):
+def save_error_rates_to_csv(all_error_rates, filepath="benchmark_data/x_junction_error_rates_low_error_rates.csv"):
     """Save logical error rate results to CSV file.
     
     Args:
@@ -451,6 +451,117 @@ def results_to_sinter_stats(results_data):
     return stats_list
 
 
+def fit_and_plot_distance(ax, stats_list, group_func, x_func, plot_args_func, min_points=2):
+    """Fit p_logical = A * p^((d+1)/2) to data, add fit lines, and create inset d vs k plot.
+    
+    Args:
+        ax: matplotlib axes object
+        stats_list: List of sinter.TaskStats objects
+        group_func: Function to group stats into curves (same as used in sinter.plot_error_rate)
+        x_func: Function to extract x value (physical error rate)
+        plot_args_func: Function to get plot styling for each curve
+        min_points: Minimum number of points with reasonable error bars needed for fitting
+    """
+    from collections import defaultdict
+    from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+    
+    # Group stats by curve
+    curves = defaultdict(list)
+    for s in stats_list:
+        curve_id = group_func(s)
+        curves[curve_id].append(s)
+    
+    # Collect fitted distances for inset plot: list of (k, d_eff, plot_args, curve_id)
+    fitted_distances = []
+    
+    for idx, (curve_id, stats) in enumerate(curves.items()):
+        # Extract data points: (p, p_logical, error_bar)
+        points = []
+        k_value = None
+        for s in stats:
+            if k_value is None:
+                k_value = s.json_metadata.get('k')
+            if s.errors > 0 and s.shots > 0:
+                p = x_func(s)
+                p_logical = s.errors / s.shots
+                # Approximate error bar (binomial standard error)
+                error_bar = np.sqrt(p_logical * (1 - p_logical) / s.shots)
+                # Only include points with reasonable error bars (< 10% of value)
+                if error_bar < 0.1 * p_logical and p_logical > 0:
+                    points.append((p, p_logical, error_bar))
+        
+        # Sort by physical error rate and take the two lowest
+        points.sort(key=lambda x: x[0])
+        
+        if len(points) < min_points:
+            continue
+        
+        # Use the two points with lowest physical error rate
+        fit_points = points[:min_points]
+        
+        # Fit in log-log space: log(p_logical) = log(A) + slope * log(p)
+        # where slope = (d+1)/2, so d = 2*slope - 1
+        log_p = np.array([np.log(pt[0]) for pt in fit_points])
+        log_p_logical = np.array([np.log(pt[1]) for pt in fit_points])
+        
+        # Linear fit in log-log space
+        slope, intercept = np.polyfit(log_p, log_p_logical, 1)
+        
+        # Calculate effective distance: slope = (d+1)/2 => d = 2*slope - 1
+        d_eff = 2 * slope - 1
+        
+        # Get plot styling
+        plot_args = plot_args_func(idx, curve_id)
+        color = plot_args.get('color', 'black')
+        marker = plot_args.get('marker', 'o')
+        linestyle = plot_args.get('linestyle', '-')
+        
+        # Generate fit line across fixed x range (8e-5 to 1e-3)
+        p_range = np.logspace(np.log10(8e-5), np.log10(1e-3), 100)
+        p_logical_fit = np.exp(intercept) * p_range ** slope
+        
+        # Plot fit line as very faint dotted line
+        ax.plot(p_range, p_logical_fit, color=color, linestyle=':', alpha=0.25, linewidth=1.5)
+        
+        # Store for inset plot
+        if k_value is not None:
+            fitted_distances.append((k_value, d_eff, color, marker, linestyle, curve_id))
+    
+    # Create inset plot for d vs k
+    if fitted_distances:
+        # Create inset axes in bottom right corner
+        inset_ax = inset_axes(ax, width="30%", height="30%", loc='lower right', 
+                              bbox_to_anchor=(0, 0.08, 1, 1), bbox_transform=ax.transAxes, borderpad=2)
+        
+        # Group by linestyle to draw black connecting lines (since different k values have same linestyle)
+        from collections import defaultdict
+        linestyle_groups = defaultdict(list)
+        for k, d, color, marker, linestyle, curve_id in fitted_distances:
+            linestyle_groups[linestyle].append((k, d, color, marker))
+        
+        # First draw black connecting lines by linestyle
+        for linestyle, points in linestyle_groups.items():
+            points.sort(key=lambda x: x[0])  # Sort by k
+            ks = [p[0] for p in points]
+            ds = [p[1] for p in points]
+            inset_ax.plot(ks, ds, color='black', linestyle=linestyle, linewidth=1.5, zorder=1)
+        
+        # Then plot markers on top with their colors
+        for k, d, color, marker, linestyle, curve_id in fitted_distances:
+            inset_ax.plot(k, d, color=color, marker=marker, linestyle='none', 
+                         markersize=6, zorder=2)
+        
+        # Style the inset
+        inset_ax.set_xlabel('k', fontsize=22)
+        inset_ax.set_ylabel('$d_{eff}$', fontsize=22)
+        inset_ax.tick_params(axis='both', labelsize=22)
+        inset_ax.set_xticks([1, 2, 3])
+        # Set y-ticks to integers only
+        from matplotlib.ticker import MaxNLocator
+        inset_ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+        inset_ax.grid(True, alpha=0.3)
+
+
 def plot_logical_error_rates(data_dict, save_path="benchmark_plots/x_junction_error_rates.pdf"):
     """Plot logical error rates using sinter.plot_error_rate (same style as benchmark_memory.py).
     
@@ -490,13 +601,19 @@ def plot_logical_error_rates(data_dict, save_path="benchmark_plots/x_junction_er
             'linestyle': '--' if circuit_type == 'N/Z' else '-',
         }
     
+    group_func = lambda s: f"{s.json_metadata['circuit']} k={s.json_metadata['k']}"
+    x_func = lambda s: s.json_metadata['p']
+    
     sinter.plot_error_rate(
         ax=ax,
         stats=stats_list,
-        x_func=lambda s: s.json_metadata['p'],
-        group_func=lambda s: f"{s.json_metadata['circuit']} k={s.json_metadata['k']}",
+        x_func=x_func,
+        group_func=group_func,
         plot_args_func=combined_plot_args,
     )
+    
+    # Add fit lines with distance labels
+    fit_and_plot_distance(ax, stats_list, group_func, x_func, combined_plot_args)
     
     ax.loglog()
     ax.set_xlabel("Physical Error Rate", fontsize=22)
@@ -596,10 +713,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Compare standard vs diagonal X-junction circuits')
     parser.add_argument('--error-rates', action='store_true', 
                        help='Calculate and plot logical error rates (requires pymatching)')
-    parser.add_argument('--shots', type=int, default=300000000,
+    parser.add_argument('--shots', type=int, default=2000_000_000,
                        help='Number of shots for logical error rate calculation (default: 50000)')
     parser.add_argument('--noise-levels', nargs='+', type=float,
-                       default=np.logspace(-3.5, -2, 7),
+                       default=np.logspace(-4, -2, 9)[2:],
                        help='Physical error rates to test (default: 0.001 0.002 0.005)')
     parser.add_argument('--plot-only', action='store_true',
                        help='Only generate plots from existing CSV data (skip all computations)')

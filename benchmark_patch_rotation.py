@@ -42,17 +42,17 @@ from tqec import NoiseModel
 
 # Parameter ranges
 K_VALUES = [1, 2, 3]
-BASIS_VALUES = ['z', 'x']  # Logical qubit init/measure basis
-PHYSICAL_ERROR_RATES = np.logspace(-3.5, -2, 7)  # ~[0.000316, 0.001, 0.00316, 0.01]
+BASIS_VALUES = ['z']  # Logical qubit init/measure basis
+PHYSICAL_ERROR_RATES = np.logspace(-4, -2, 9)[:2]  # ~[0.000316, 0.001, 0.00316, 0.01]
 
 # Sampling configuration
-MAX_SHOTS = 100_000_000
+MAX_SHOTS = 5000_000_000
 MAX_ERRORS = 3000
 NUM_WORKERS = 10
 RANDOM_SEED = 42
 
 # Output file
-OUTPUT_CSV = 'benchmark_data/patch_rotation_benchmark.csv'
+OUTPUT_CSV = 'benchmark_data/patch_rotation_benchmark_low_error_rates.csv'
 
 
 # =============================================================================
@@ -472,6 +472,115 @@ def results_to_sinter_stats(results: list[dict]) -> list[sinter.TaskStats]:
     return stats_list
 
 
+def fit_and_plot_distance(ax, stats_list, group_func, x_func, plot_args_func, min_points=2):
+    """Fit p_logical = A * p^((d+1)/2) to data, add fit lines, and create inset d vs k plot.
+    
+    Args:
+        ax: matplotlib axes object
+        stats_list: List of sinter.TaskStats objects
+        group_func: Function to group stats into curves (same as used in sinter.plot_error_rate)
+        x_func: Function to extract x value (physical error rate)
+        plot_args_func: Function to get plot styling for each curve
+        min_points: Minimum number of points with reasonable error bars needed for fitting
+    """
+    from collections import defaultdict
+    from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+    
+    # Group stats by curve
+    curves = defaultdict(list)
+    for s in stats_list:
+        curve_id = group_func(s)
+        curves[curve_id].append(s)
+    
+    # Collect fitted distances for inset plot: list of (k, d_eff, plot_args, curve_id)
+    fitted_distances = []
+    
+    for idx, (curve_id, stats) in enumerate(curves.items()):
+        # Extract data points: (p, p_logical, error_bar)
+        points = []
+        k_value = None
+        for s in stats:
+            if k_value is None:
+                k_value = s.json_metadata.get('k')
+            if s.errors > 0 and s.shots > 0:
+                p = x_func(s)
+                p_logical = s.errors / s.shots
+                # Approximate error bar (binomial standard error)
+                error_bar = np.sqrt(p_logical * (1 - p_logical) / s.shots)
+                # Only include points with reasonable error bars (< 10% of value)
+                if error_bar < 0.1 * p_logical and p_logical > 0:
+                    points.append((p, p_logical, error_bar))
+        
+        # Sort by physical error rate and take the two lowest
+        points.sort(key=lambda x: x[0])
+        
+        if len(points) < min_points:
+            continue
+        
+        # Use the two points with lowest physical error rate
+        fit_points = points[:min_points]
+        
+        # Fit in log-log space: log(p_logical) = log(A) + slope * log(p)
+        # where slope = (d+1)/2, so d = 2*slope - 1
+        log_p = np.array([np.log(pt[0]) for pt in fit_points])
+        log_p_logical = np.array([np.log(pt[1]) for pt in fit_points])
+        
+        # Linear fit in log-log space
+        slope, intercept = np.polyfit(log_p, log_p_logical, 1)
+        
+        # Calculate effective distance: slope = (d+1)/2 => d = 2*slope - 1
+        d_eff = 2 * slope - 1
+        
+        # Get plot styling
+        plot_args = plot_args_func(idx, curve_id)
+        color = plot_args.get('color', 'black')
+        marker = plot_args.get('marker', 'o')
+        linestyle = plot_args.get('linestyle', '-')
+        
+        # Generate fit line across fixed x range (8e-5 to 1e-3)
+        p_range = np.logspace(np.log10(8e-5), np.log10(1e-3), 100)
+        p_logical_fit = np.exp(intercept) * p_range ** slope
+        
+        # Plot fit line as very faint dotted line
+        ax.plot(p_range, p_logical_fit, color=color, linestyle=':', alpha=0.25, linewidth=1.5)
+        
+        # Store for inset plot
+        if k_value is not None:
+            fitted_distances.append((k_value, d_eff, color, marker, linestyle, curve_id))
+    
+    # Create inset plot for d vs k
+    if fitted_distances:
+        # Create inset axes in bottom right corner
+        inset_ax = inset_axes(ax, width="30%", height="30%", loc='lower right', 
+                              bbox_to_anchor=(0, 0.08, 1, 1), bbox_transform=ax.transAxes, borderpad=2)
+        
+        # Group by curve characteristics (excluding k) to connect points with same style
+        from collections import defaultdict
+        curve_groups = defaultdict(list)
+        for k, d, color, marker, linestyle, curve_id in fitted_distances:
+            # Extract non-k part of curve_id for grouping
+            group_key = (color, marker, linestyle)
+            curve_groups[group_key].append((k, d))
+        
+        # Plot each group with lines connecting points
+        for (color, marker, linestyle), points in curve_groups.items():
+            points.sort(key=lambda x: x[0])  # Sort by k
+            ks = [p[0] for p in points]
+            ds = [p[1] for p in points]
+            inset_ax.plot(ks, ds, color=color, marker=marker, linestyle=linestyle, 
+                         markersize=6, linewidth=1.5)
+        
+        # Style the inset
+        inset_ax.set_xlabel('k', fontsize=22)
+        inset_ax.set_ylabel('$d_{eff}$', fontsize=22)
+        inset_ax.tick_params(axis='both', labelsize=22)
+        inset_ax.set_xticks([1, 2, 3])
+        # Set y-ticks to integers only
+        from matplotlib.ticker import MaxNLocator
+        inset_ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+        inset_ax.grid(True, alpha=0.3)
+
+
 def plot_single_basis(
     stats_list: list,
     basis: str,
@@ -500,16 +609,22 @@ def plot_single_basis(
             'linestyle': '-',
         }
     
+    group_func = lambda s: f"k={s.json_metadata['k']}"
+    x_func = lambda s: s.json_metadata['p']
+    
     # Create standalone figure
     fig, ax = plt.subplots(figsize=(10, 8))
     
     sinter.plot_error_rate(
         ax=ax,
         stats=basis_stats,
-        x_func=lambda s: s.json_metadata['p'],
-        group_func=lambda s: f"k={s.json_metadata['k']}",
+        x_func=x_func,
+        group_func=group_func,
         plot_args_func=plot_args_func,
     )
+    
+    # Add fit lines with distance labels
+    fit_and_plot_distance(ax, basis_stats, group_func, x_func, plot_args_func)
     
     ax.legend(fontsize=22, loc='upper left')
     ax.loglog()
@@ -593,13 +708,19 @@ def plot_results(results: list[BenchmarkResult], output_dir: str = 'benchmark_pl
         if not basis_stats:
             continue
         
+        group_func = lambda s: f"k={s.json_metadata['k']}"
+        x_func = lambda s: s.json_metadata['p']
+        
         sinter.plot_error_rate(
             ax=ax,
             stats=basis_stats,
-            x_func=lambda s: s.json_metadata['p'],
-            group_func=lambda s: f"k={s.json_metadata['k']}",
+            x_func=x_func,
+            group_func=group_func,
             plot_args_func=plot_args_func,
         )
+        
+        # Add fit lines with distance labels
+        fit_and_plot_distance(ax, basis_stats, group_func, x_func, plot_args_func)
         
         ax.legend(fontsize=22, loc='upper left')
         ax.loglog()
