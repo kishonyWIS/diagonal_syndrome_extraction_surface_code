@@ -45,24 +45,24 @@ from tqec import NoiseModel
 # =============================================================================
 
 # Parameter ranges
-DIRECTIONS = ['x', 'y']
+DIRECTIONS = ['y']
 # Flag configurations:
 #   'all': flags measured every round (measure_shared_data_final_only=False)
 #   'partial': flags measured only in final round (measure_shared_data_final_only=True)
 #   'none': no flags at all (measure_coupling_aux_mz=False, measure_shared_data=False)
 FLAG_CONFIGS = ['none', 'partial', 'all']
-K_VALUES = [1, 2, 3]
-PHYSICAL_ERROR_RATES = np.logspace(-4, -2, 9)[:2]  # ~[0.000316, 0.001, 0.00316, 0.01]
-DECODERS = ['pymatching', 'correlated_pymatching']#, 'tesseract']
+K_VALUES = [4]
+PHYSICAL_ERROR_RATES = np.logspace(-4, -2, 9)[2:][::-1][-2:]  # ~[0.000316, 0.001, 0.00316, 0.01]
+DECODERS = ['correlated_pymatching']#, 'tesseract']
 
 # Sampling configuration
-MAX_SHOTS = 1000_000_000
-MAX_ERRORS = 3000
+MAX_SHOTS = 500_000_000
+MAX_ERRORS = 300
 NUM_WORKERS = 10
 RANDOM_SEED = 42
 
 # Output file
-OUTPUT_CSV = 'benchmark_data/spatial_hadamard_lower_error_rates_benchmark.csv'
+OUTPUT_CSV = 'benchmark_data/spatial_hadamard_benchmark_k4_y_only_correlated_pymatching_only.csv'
 
 
 # =============================================================================
@@ -752,8 +752,9 @@ def fit_and_plot_distance(ax, stats_list, group_func, x_func, plot_args_func, mi
         marker = plot_args.get('marker', 'o')
         linestyle = plot_args.get('linestyle', '-')
         
-        # Generate fit line across fixed x range (8e-5 to 1e-3)
-        p_range = np.logspace(np.log10(8e-5), np.log10(1e-3), 100)
+        # Generate fit line across fixed x range (use different start for k=4)
+        p_min = 2.7e-4 if k_value == 4 else 8e-5
+        p_range = np.logspace(np.log10(p_min), np.log10(1e-3), 100)
         p_logical_fit = np.exp(intercept) * p_range ** slope
         
         # Plot fit line as very faint dotted line
@@ -791,7 +792,7 @@ def fit_and_plot_distance(ax, stats_list, group_func, x_func, plot_args_func, mi
         inset_ax.set_xlabel('k', fontsize=22)
         inset_ax.set_ylabel('$d_{eff}$', fontsize=22)
         inset_ax.tick_params(axis='both', labelsize=22)
-        inset_ax.set_xticks([1, 2, 3])
+        inset_ax.set_xticks([1, 2, 3, 4])
         # Set y-ticks to integers only
         from matplotlib.ticker import MaxNLocator
         inset_ax.yaxis.set_major_locator(MaxNLocator(integer=True))
@@ -859,6 +860,7 @@ def plot_single_direction(
     ax.legend(handles, new_labels, fontsize=18, ncol=3, loc='upper left', columnspacing=0.5, handletextpad=0.3)
     
     ax.loglog()
+    ax.set_xlim(left=7e-5)
     ax.set_xlabel("Physical Error Rate", fontsize=22)
     ax.set_ylabel("Logical Error Rate", fontsize=22)
     ax.tick_params(axis='both', which='major', labelsize=22)
@@ -975,6 +977,7 @@ def plot_error_rates(
         ax.legend(handles, new_labels, fontsize=18, ncol=3, loc='upper left', columnspacing=0.5, handletextpad=0.3)
         
         ax.loglog()
+        ax.set_xlim(left=7e-5)
         ax.set_xlabel("Physical Error Rate", fontsize=22)
         if i == 0:  # Only set ylabel on left panel
             ax.set_ylabel("Logical Error Rate", fontsize=22)

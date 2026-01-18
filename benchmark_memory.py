@@ -578,8 +578,9 @@ def fit_and_plot_distance(ax, stats_list, group_func, x_func, plot_args_func, mi
         marker = plot_args.get('marker', 'o')
         linestyle = plot_args.get('linestyle', '-')
         
-        # Generate fit line across fixed x range (8e-5 to 1e-3)
-        p_range = np.logspace(np.log10(8e-5), np.log10(1e-3), 100)
+        # Generate fit line across fixed x range (use different start for k=4)
+        p_min = 2.7e-4 if k_value == 4 else 8e-5
+        p_range = np.logspace(np.log10(p_min), np.log10(1e-3), 100)
         p_logical_fit = np.exp(intercept) * p_range ** slope
         
         # Plot fit line as very faint dotted line
@@ -617,7 +618,7 @@ def fit_and_plot_distance(ax, stats_list, group_func, x_func, plot_args_func, mi
         inset_ax.set_xlabel('k', fontsize=22)
         inset_ax.set_ylabel('$d_{eff}$', fontsize=22)
         inset_ax.tick_params(axis='both', labelsize=22)
-        inset_ax.set_xticks([1, 2, 3])
+        inset_ax.set_xticks([1, 2, 3, 4])
         # Set y-ticks to integers only
         from matplotlib.ticker import MaxNLocator
         inset_ax.yaxis.set_major_locator(MaxNLocator(integer=True))
@@ -711,6 +712,7 @@ def plot_logical_error_rates_multi_k(results_data, save_path="benchmark_plots/me
                           min_points=4, max_error_bar_ratio=None)
     
     ax.loglog()
+    ax.set_xlim(left=7e-5)
     ax.set_xlabel("Physical Error Rate", fontsize=22)
     ax.set_ylabel("Logical Error Rate", fontsize=22)
     ax.tick_params(axis='both', which='major', labelsize=22)
@@ -749,7 +751,7 @@ def calculate_circuit_distance(circuit):
 # CSV Data Saving/Loading
 # =============================================================================
 
-def save_error_rates_to_csv(all_results, filepath="benchmark_data/memory_error_rates.csv"):
+def save_error_rates_to_csv(all_results, filepath="benchmark_data/memory_error_rates_k4.csv"):
     """Save logical error rate results to CSV file.
     
     Args:
@@ -943,7 +945,7 @@ def main():
     """Main comparison function for N/Z vs diagonal circuits."""
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Compare N/Z vs diagonal surface code circuits')
-    parser.add_argument('--k-values', nargs='+', type=int, default=[1, 2, 3],
+    parser.add_argument('--k-values', nargs='+', type=int, default=[4],
                        help='k values to test (default: 1 2 3)')
     parser.add_argument('--shots', type=int, default=10000_000_000,
                        help='Number of shots for logical error rate calculation (default: 50000)')
@@ -1002,7 +1004,7 @@ def main():
     if args.noise_levels:
         noise_levels = args.noise_levels
     else:
-        noise_levels = np.logspace(-4, -2, 9)[2:]  # Default: 9 noise levels from 0.0001 to 0.01
+        noise_levels = np.logspace(-4, -2, 9)[2:][::-1]  # Default: 9 noise levels from 0.0001 to 0.01
     
     print(f"Testing k values: {k_values}")
     print(f"Surface code distances: {[2*k+1 for k in k_values]}")

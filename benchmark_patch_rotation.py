@@ -537,8 +537,9 @@ def fit_and_plot_distance(ax, stats_list, group_func, x_func, plot_args_func, mi
         marker = plot_args.get('marker', 'o')
         linestyle = plot_args.get('linestyle', '-')
         
-        # Generate fit line across fixed x range (8e-5 to 1e-3)
-        p_range = np.logspace(np.log10(8e-5), np.log10(1e-3), 100)
+        # Generate fit line across fixed x range (use different start for k=4)
+        p_min = 2.7e-4 if k_value == 4 else 8e-5
+        p_range = np.logspace(np.log10(p_min), np.log10(1e-3), 100)
         p_logical_fit = np.exp(intercept) * p_range ** slope
         
         # Plot fit line as very faint dotted line
@@ -574,7 +575,7 @@ def fit_and_plot_distance(ax, stats_list, group_func, x_func, plot_args_func, mi
         inset_ax.set_xlabel('k', fontsize=22)
         inset_ax.set_ylabel('$d_{eff}$', fontsize=22)
         inset_ax.tick_params(axis='both', labelsize=22)
-        inset_ax.set_xticks([1, 2, 3])
+        inset_ax.set_xticks([1, 2, 3, 4])
         # Set y-ticks to integers only
         from matplotlib.ticker import MaxNLocator
         inset_ax.yaxis.set_major_locator(MaxNLocator(integer=True))
@@ -628,6 +629,7 @@ def plot_single_basis(
     
     ax.legend(fontsize=22, loc='upper left')
     ax.loglog()
+    ax.set_xlim(left=7e-5)
     ax.set_xlabel("Physical Error Rate", fontsize=22)
     ax.set_ylabel("Logical Error Rate", fontsize=22)
     ax.tick_params(axis='both', which='major', labelsize=22)
@@ -724,6 +726,7 @@ def plot_results(results: list[BenchmarkResult], output_dir: str = 'benchmark_pl
         
         ax.legend(fontsize=22, loc='upper left')
         ax.loglog()
+        ax.set_xlim(left=7e-5)
         ax.set_xlabel("Physical Error Rate", fontsize=22)
         if i == 0:  # Only set ylabel on left panel
             ax.set_ylabel("Logical Error Rate", fontsize=22)
