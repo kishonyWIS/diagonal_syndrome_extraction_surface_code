@@ -259,7 +259,7 @@ def calculate_logical_error_rate(circuit, shots=50000, noise_levels=[0.001, 0.00
 # CSV Data Saving/Loading
 # =============================================================================
 
-def save_error_rates_to_csv(all_error_rates, filepath="benchmark_data/x_junction_error_rates_low_error_rates.csv"):
+def save_error_rates_to_csv(all_error_rates, filepath="benchmark_data/x_junction_error_rates_k4.csv"):
     """Save logical error rate results to CSV file.
     
     Args:
@@ -718,7 +718,7 @@ if __name__ == "__main__":
     parser.add_argument('--shots', type=int, default=2000_000_000,
                        help='Number of shots for logical error rate calculation (default: 50000)')
     parser.add_argument('--noise-levels', nargs='+', type=float,
-                       default=np.logspace(-4, -2, 9)[:2],
+                       default=np.logspace(-4, -2, 9)[2:][::-1],
                        help='Physical error rates to test (default: 0.001 0.002 0.005)')
     parser.add_argument('--plot-only', action='store_true',
                        help='Only generate plots from existing CSV data (skip all computations)')
@@ -746,7 +746,7 @@ if __name__ == "__main__":
         sys.exit(0)
     
     # If error rates are requested, we need to test multiple k values
-    k_values = [1, 2, 3] if args.error_rates else [1]
+    k_values = [4] if args.error_rates else [1]
     
     print("Creating X junction block graph...")
     print("=" * 60)

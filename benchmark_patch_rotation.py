@@ -41,18 +41,18 @@ from tqec import NoiseModel
 # =============================================================================
 
 # Parameter ranges
-K_VALUES = [1, 2, 3]
+K_VALUES = [4]
 BASIS_VALUES = ['z']  # Logical qubit init/measure basis
-PHYSICAL_ERROR_RATES = np.logspace(-4, -2, 9)[:2]  # ~[0.000316, 0.001, 0.00316, 0.01]
+PHYSICAL_ERROR_RATES = [np.logspace(-4, -2, 9)[2:][::-1][-1]]  # ~[0.000316, 0.001, 0.00316, 0.01]
 
 # Sampling configuration
-MAX_SHOTS = 5000_000_000
+MAX_SHOTS = 1500_000_000
 MAX_ERRORS = 3000
 NUM_WORKERS = 10
 RANDOM_SEED = 42
 
 # Output file
-OUTPUT_CSV = 'benchmark_data/patch_rotation_benchmark_low_error_rates.csv'
+OUTPUT_CSV = 'benchmark_data/patch_rotation_benchmark_k4_z_only_low_error_rates.csv'
 
 
 # =============================================================================

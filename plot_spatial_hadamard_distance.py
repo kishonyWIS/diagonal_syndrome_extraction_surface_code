@@ -61,7 +61,7 @@ def get_circuit_distance(
     noisy_circuit = noise_model.noisy_circuit(circuit)
     
     # Compute exact distance via ILP
-    dem = noisy_circuit.detector_error_model(decompose_errors=True)
+    dem = noisy_circuit.detector_error_model(decompose_errors=False)
     result = mip_circuit_distance(dem, time_limit=time_limit, verbose=False)
     
     if result["status"] not in ["OPTIMAL", "FEASIBLE"]:
