@@ -30,6 +30,15 @@ import stim
 import sinter
 import tesseract_decoder.tesseract as tesseract
 
+# Add BeamSearchDecoder to path
+sys.path.insert(0, '/Users/giladkishony/PycharmProjects/BeamSearchDecoder')
+try:
+    from beamsearch import BeamSearch
+    BEAMSEARCH_AVAILABLE = True
+except ImportError:
+    BEAMSEARCH_AVAILABLE = False
+    print("Warning: BeamSearchDecoder not available. Install from https://github.com/ionq-publications/BeamSearchDecoder")
+
 # Force unbuffered output
 sys.stdout.reconfigure(line_buffering=True)
 
@@ -51,18 +60,18 @@ DIRECTIONS = ['y']
 #   'partial': flags measured only in final round (measure_shared_data_final_only=True)
 #   'none': no flags at all (measure_coupling_aux_mz=False, measure_shared_data=False)
 FLAG_CONFIGS = ['none', 'partial', 'all']
-K_VALUES = [4]
-PHYSICAL_ERROR_RATES = np.logspace(-4, -2, 9)[2:][::-1][-2:]  # ~[0.000316, 0.001, 0.00316, 0.01]
-DECODERS = ['correlated_pymatching']#, 'tesseract']
+K_VALUES = [1, 2, 3]
+PHYSICAL_ERROR_RATES = np.logspace(-4, -2, 9)[3:][::-1]  # ~[0.000316, 0.001, 0.00316, 0.01]
+DECODERS = ['tesseract']#, 'tesseract']
 
 # Sampling configuration
 MAX_SHOTS = 500_000_000
-MAX_ERRORS = 300
+MAX_ERRORS = 100
 NUM_WORKERS = 10
 RANDOM_SEED = 42
 
 # Output file
-OUTPUT_CSV = 'benchmark_data/spatial_hadamard_benchmark_k4_y_only_correlated_pymatching_only.csv'
+OUTPUT_CSV = 'benchmark_data/spatial_hadamard_benchmark_y_only_tesseract_only.csv'
 
 
 # =============================================================================
@@ -163,11 +172,70 @@ class TesseractDecoder(sinter.Decoder):
         )
 
 
+class BeamSearchSinterDecoder(sinter.Decoder):
+    """Sinter decoder wrapper for IonQ BeamSearch decoder."""
+    
+    def __init__(self, beam_width: int = 8, max_rounds: int = 10):
+        self.beam_width = beam_width
+        self.max_rounds = max_rounds
+    
+    def decode_via_files(
+        self,
+        *,
+        num_shots: int,
+        num_dets: int,
+        num_obs: int,
+        dem_path: str,
+        dets_b8_in_path: str,
+        obs_predictions_b8_out_path: str,
+        tmp_dir: str,
+    ) -> None:
+        """Decode using file-based interface."""
+        import pathlib
+        
+        # Load DEM (decomposed for BP-based decoder)
+        dem = stim.DetectorErrorModel.from_file(dem_path)
+        
+        # Create beam search decoder
+        decoder = BeamSearch(
+            model=dem,
+            max_rounds=self.max_rounds,
+            beam_width=self.beam_width,
+            num_results=1,
+            initial_iters=30,
+            iters_per_round=20,
+        )
+        
+        # Load detector data
+        dets = stim.read_shot_data_file(
+            path=dets_b8_in_path,
+            format='b8',
+            num_detectors=num_dets,
+            num_observables=0,
+        )
+        
+        # Decode
+        predictions = decoder.decode_batch(dets)
+        
+        # Write predictions
+        stim.write_shot_data_file(
+            data=predictions,
+            path=obs_predictions_b8_out_path,
+            format='b8',
+            num_observables=num_obs,
+        )
+
+
 # Custom decoder registry for sinter
 CUSTOM_DECODERS = {
     'correlated_pymatching': CorrelatedPymatchingDecoder(),
     'tesseract': TesseractDecoder(),
 }
+
+# Add beam search decoders if available
+if BEAMSEARCH_AVAILABLE:
+    CUSTOM_DECODERS['beamsearch_8'] = BeamSearchSinterDecoder(beam_width=8)
+    CUSTOM_DECODERS['beamsearch_32'] = BeamSearchSinterDecoder(beam_width=32)
 
 
 # =============================================================================
@@ -1182,7 +1250,7 @@ def main():
     
     # Run benchmark with distance calculation enabled
     # Results are saved incrementally to CSV after each configuration
-    results = run_benchmark(skip_distance=False)
+    results = run_benchmark(skip_distance=True)
     
     # Print summary
     print_summary(results)
