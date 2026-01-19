@@ -50,6 +50,98 @@ from tqec import NoiseModel
 
 
 # =============================================================================
+# Interface-Only Noise Support
+# =============================================================================
+
+def get_qubit_coordinates(circuit: stim.Circuit) -> dict[int, tuple[float, float]]:
+    """Extract qubit coordinates from QUBIT_COORDS instructions.
+    
+    Returns:
+        Dict mapping qubit index to (x, y) coordinates.
+    """
+    coords = {}
+    for inst in circuit.flattened():
+        if inst.name == "QUBIT_COORDS":
+            args = inst.gate_args_copy()
+            for target in inst.targets_copy():
+                coords[target.value] = (args[0], args[1])
+    return coords
+
+
+def identify_interface_qubits(
+    circuit: stim.Circuit,
+    k: int,
+    axis: str,
+    margin: float = 1.0,
+) -> set[int]:
+    """Identify qubits at or near the interface between the two cubes.
+    
+    The interface is located at coordinates 4*k+2 to 4*k+4 along the interface axis.
+    Qubits within `margin` of this range are considered "interface qubits".
+    
+    Args:
+        circuit: The stim circuit with QUBIT_COORDS
+        k: Scaling factor
+        axis: 'x' or 'y' - the direction of the two-cube layout
+        margin: How far from the interface to include qubits (default: 1.0)
+        
+    Returns:
+        Set of qubit indices that are at or near the interface.
+    """
+    coords = get_qubit_coordinates(circuit)
+    
+    # Interface is at 4*k+2 to 4*k+4
+    interface_min = 4 * k + 2 - margin
+    interface_max = 4 * k + 4 + margin
+    
+    interface_qubits = set()
+    for qubit, (x, y) in coords.items():
+        # Check the relevant coordinate based on axis
+        coord = x if axis == 'x' else y
+        if interface_min <= coord <= interface_max:
+            interface_qubits.add(qubit)
+    
+    return interface_qubits
+
+
+def apply_interface_only_noise(
+    circuit: stim.Circuit,
+    noise_model: NoiseModel,
+    k: int,
+    axis: str,
+    margin: float = 1.0,
+) -> stim.Circuit:
+    """Apply noise only to qubits at or near the interface.
+    
+    All qubits NOT at the interface are marked as "immune" to noise.
+    
+    Args:
+        circuit: The noise-free circuit
+        noise_model: The noise model to apply
+        k: Scaling factor
+        axis: 'x' or 'y' - the direction of the two-cube layout
+        margin: How far from the interface to include qubits
+        
+    Returns:
+        Circuit with noise applied only to interface qubits.
+    """
+    # Identify interface qubits
+    interface_qubits = identify_interface_qubits(circuit, k, axis, margin)
+    
+    # All other qubits are immune
+    all_qubits = set(range(circuit.num_qubits))
+    immune_qubits = all_qubits - interface_qubits
+    
+    # Apply noise with immune qubits
+    return noise_model.noisy_circuit(circuit, immune_qubits=immune_qubits)
+
+
+# Noise mode options: 'full' (default), 'interface_only'
+NOISE_MODE = 'full'
+INTERFACE_MARGIN = 1.0  # How far from interface to include qubits
+
+
+# =============================================================================
 # Configuration
 # =============================================================================
 
@@ -515,6 +607,7 @@ def run_benchmark(skip_distance: bool = True) -> list[BenchmarkResult]:
     print(f"Total tasks: {total_tasks}")
     print(f"Loop order: decoder -> k -> noise -> flag_config -> direction")
     print(f"Flag configs: {FLAG_CONFIGS}")
+    print(f"Noise mode: {NOISE_MODE}" + (f" (margin={INTERFACE_MARGIN})" if NOISE_MODE == 'interface_only' else ""))
     print(f"Max shots per config: {MAX_SHOTS:,}")
     print(f"Max errors for early stopping: {MAX_ERRORS:,}")
     print(f"Number of workers: {NUM_WORKERS}")
@@ -548,10 +641,15 @@ def run_benchmark(skip_distance: bool = True) -> list[BenchmarkResult]:
                         
                         # Generate compacted circuit (without noise)
                         circuit = generate_circuit_for_config(config)
-                        
+
                         # Add noise using NoiseModel.noisy_circuit()
                         noise_model = NoiseModel.uniform_depolarizing(noise_level)
-                        noisy_circuit = noise_model.noisy_circuit(circuit)
+                        if NOISE_MODE == 'interface_only':
+                            noisy_circuit = apply_interface_only_noise(
+                                circuit, noise_model, k, direction, INTERFACE_MARGIN
+                            )
+                        else:
+                            noisy_circuit = noise_model.noisy_circuit(circuit)
                         
                         metadata = {
                             'direction': direction,

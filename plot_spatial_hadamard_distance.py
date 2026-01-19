@@ -20,6 +20,7 @@ from tqec import NoiseModel
 from spatial_hadamard_manual_construction import generate_spatial_hadamard_circuit
 from compact_circuit import compact_and_delay_init
 from ilp_circuit_distance import mip_circuit_distance
+from benchmark_spatial_hadamard import apply_interface_only_noise
 
 # Default CSV path for saving/loading data
 DEFAULT_CSV_PATH = 'benchmark_data/spatial_hadamard_distance.csv'
@@ -31,6 +32,8 @@ def get_circuit_distance(
     flag_config: str, 
     num_cycles: int = 2,
     time_limit: int = 300,
+    noise_mode: str = 'full',
+    interface_margin: float = 1.0,
 ) -> int:
     """Generate a spatial Hadamard circuit and compute its exact distance via ILP.
     
@@ -40,6 +43,8 @@ def get_circuit_distance(
         flag_config: 'all', 'partial', or 'none'
         num_cycles: Number of syndrome extraction cycles (default 2 for fast ILP)
         time_limit: ILP solver time limit in seconds
+        noise_mode: 'full' (all qubits) or 'interface_only' (only qubits near interface)
+        interface_margin: How far from interface to include qubits (for interface_only mode)
         
     Returns:
         Exact circuit-level distance
@@ -58,7 +63,12 @@ def get_circuit_distance(
     
     # Add noise for distance calculation
     noise_model = NoiseModel.uniform_depolarizing(0.001)
-    noisy_circuit = noise_model.noisy_circuit(circuit)
+    if noise_mode == 'interface_only':
+        noisy_circuit = apply_interface_only_noise(
+            circuit, noise_model, k, direction, interface_margin
+        )
+    else:
+        noisy_circuit = noise_model.noisy_circuit(circuit)
     
     # Compute exact distance via ILP
     dem = noisy_circuit.detector_error_model(decompose_errors=False)
@@ -70,13 +80,21 @@ def get_circuit_distance(
     return result["distance"]
 
 
-def compute_all_distances(k_values: list[int], num_cycles: int = 2, time_limit: int = 300) -> dict:
+def compute_all_distances(
+    k_values: list[int], 
+    num_cycles: int = 2, 
+    time_limit: int = 300,
+    noise_mode: str = 'full',
+    interface_margin: float = 1.0,
+) -> dict:
     """Compute distances for all configurations using ILP.
     
     Args:
         k_values: List of k values to test
         num_cycles: Number of syndrome extraction cycles (default 2 for speed)
         time_limit: ILP solver time limit in seconds
+        noise_mode: 'full' (all qubits) or 'interface_only' (only qubits near interface)
+        interface_margin: How far from interface to include qubits (for interface_only mode)
     
     Returns:
         Dictionary mapping (direction, flag_config) to list of distances for each k
@@ -89,7 +107,9 @@ def compute_all_distances(k_values: list[int], num_cycles: int = 2, time_limit: 
     total = len(directions) * len(flag_configs) * len(k_values)
     count = 0
     
-    print(f"Using {num_cycles} syndrome extraction cycles for all circuits\n")
+    print(f"Using {num_cycles} syndrome extraction cycles for all circuits")
+    print(f"Noise mode: {noise_mode}" + (f" (margin={interface_margin})" if noise_mode == 'interface_only' else ""))
+    print()
     
     for direction in directions:
         for flag_config in flag_configs:
@@ -104,7 +124,9 @@ def compute_all_distances(k_values: list[int], num_cycles: int = 2, time_limit: 
                     distance = get_circuit_distance(
                         k, direction, flag_config, 
                         num_cycles=num_cycles,
-                        time_limit=time_limit
+                        time_limit=time_limit,
+                        noise_mode=noise_mode,
+                        interface_margin=interface_margin,
                     )
                     results[key].append(distance)
                     print(f"d={distance}")
@@ -341,6 +363,19 @@ def main():
         action='store_true',
         help='Do not save results to CSV after computing'
     )
+    parser.add_argument(
+        '--noise-mode',
+        type=str,
+        choices=['full', 'interface_only'],
+        default='full',
+        help='Noise mode: full (all qubits) or interface_only (only near interface)'
+    )
+    parser.add_argument(
+        '--interface-margin',
+        type=float,
+        default=1.0,
+        help='For interface_only mode: how far from interface to include qubits (default: 1.0)'
+    )
     args = parser.parse_args()
     
     print("=" * 70)
@@ -359,6 +394,7 @@ def main():
         # Compute distances
         print(f"k values: {args.k_values}")
         print(f"Number of syndrome extraction cycles: {args.num_cycles}")
+        print(f"Noise mode: {args.noise_mode}" + (f" (margin={args.interface_margin})" if args.noise_mode == 'interface_only' else ""))
         print(f"Method: ILP (exact)")
         print(f"Time limit per circuit: {args.time_limit}s")
         print(f"Output: {args.output}")
@@ -367,7 +403,13 @@ def main():
         print()
         
         # Compute all distances
-        results = compute_all_distances(args.k_values, num_cycles=args.num_cycles, time_limit=args.time_limit)
+        results = compute_all_distances(
+            args.k_values, 
+            num_cycles=args.num_cycles, 
+            time_limit=args.time_limit,
+            noise_mode=args.noise_mode,
+            interface_margin=args.interface_margin,
+        )
         k_values = args.k_values
         
         # Save to CSV
