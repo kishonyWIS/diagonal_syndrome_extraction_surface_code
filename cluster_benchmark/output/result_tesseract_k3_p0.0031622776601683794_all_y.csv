@@ -1,0 +1,2 @@
+direction,flag_config,k,distance,physical_error_rate,decoder,logical_error_rate,errors,shots,error_bar,decode_time
+y,all,3,,0.0031622776601683794,tesseract,0.00014357360268598353,1005,6999894,4.5285627354433465e-06,3330.036618947983

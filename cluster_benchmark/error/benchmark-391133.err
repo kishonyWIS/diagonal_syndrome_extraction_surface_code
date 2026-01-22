@@ -1,0 +1,29 @@
+Traceback (most recent call last):
+  File "/home/labs/berg/gil-adk/diagonal_syndrome_extraction_surface_code/cluster_benchmark/run_single_benchmark.py", line 359, in <module>
+    main()
+  File "/home/labs/berg/gil-adk/diagonal_syndrome_extraction_surface_code/cluster_benchmark/run_single_benchmark.py", line 337, in main
+    result = run_single_benchmark(
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/labs/berg/gil-adk/diagonal_syndrome_extraction_surface_code/cluster_benchmark/run_single_benchmark.py", line 225, in run_single_benchmark
+    stats = sinter.collect(
+            ^^^^^^^^^^^^^^^
+  File "/home/labs/berg/gil-adk/diagonal_syndrome_extraction_surface_code/venv/lib/python3.11/site-packages/sinter/_collection/_collection.py", line 404, in collect
+    for progress in iter_collect(
+  File "/home/labs/berg/gil-adk/diagonal_syndrome_extraction_surface_code/venv/lib/python3.11/site-packages/sinter/_collection/_collection.py", line 226, in iter_collect
+    manager.process_message()
+  File "/home/labs/berg/gil-adk/diagonal_syndrome_extraction_surface_code/venv/lib/python3.11/site-packages/sinter/_collection/_collection_manager.py", line 314, in process_message
+    message = self.shared_worker_output_queue.get()
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/apps/easybd/easybuild/amd/software/Python/3.11.3-GCCcore-12.3.0/lib/python3.11/multiprocessing/queues.py", line 365, in get
+    res = self._reader.recv_bytes()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/apps/easybd/easybuild/amd/software/Python/3.11.3-GCCcore-12.3.0/lib/python3.11/multiprocessing/connection.py", line 215, in recv_bytes
+    buf = self._recv_bytes(maxlength)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/apps/easybd/easybuild/amd/software/Python/3.11.3-GCCcore-12.3.0/lib/python3.11/multiprocessing/connection.py", line 413, in _recv_bytes
+    buf = self._recv(4)
+          ^^^^^^^^^^^^^
+  File "/apps/easybd/easybuild/amd/software/Python/3.11.3-GCCcore-12.3.0/lib/python3.11/multiprocessing/connection.py", line 378, in _recv
+    chunk = read(handle, remaining)
+            ^^^^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt

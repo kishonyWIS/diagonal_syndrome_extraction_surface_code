@@ -1,0 +1,1 @@
+/scratch/1768818162.254110.shell: line 62: 3336032 Illegal instruction     (core dumped) python cluster_benchmark/run_single_benchmark.py --decoder "$DECODER" --k "$K_VAL" --noise "$NOISE" --flag-config "$FLAG_CONFIG" --direction "$DIRECTION" --output "$OUTPUT_FILE" --noise-mode interface_only --max-shots 1000000000000 --max-errors 1000 --num-workers 10

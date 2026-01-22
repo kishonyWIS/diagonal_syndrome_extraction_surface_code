@@ -1,0 +1,2 @@
+direction,flag_config,k,distance,physical_error_rate,decoder,logical_error_rate,errors,shots,error_bar,decode_time
+y,none,5,,0.005623413251903491,pymatching,0.008555761527592331,1320,154282,0.00023448002522694905,2.9212746620178223

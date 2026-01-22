@@ -1,0 +1,10 @@
+usage: run_single_benchmark.py [-h] --decoder
+                               {tesseract,pymatching,correlated_pymatching}
+                               --k K --noise NOISE --flag-config
+                               {none,partial,all} --direction {x,y} --output
+                               OUTPUT [--noise-mode {full,interface_only}]
+                               [--interface-margin INTERFACE_MARGIN]
+                               [--max-shots MAX_SHOTS]
+                               [--max-errors MAX_ERRORS]
+                               [--num-workers NUM_WORKERS]
+run_single_benchmark.py: error: argument --decoder: invalid choice: 'tesseract\n"' (choose from 'tesseract', 'pymatching', 'correlated_pymatching')

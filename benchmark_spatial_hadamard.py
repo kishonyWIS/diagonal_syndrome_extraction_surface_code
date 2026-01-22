@@ -137,7 +137,7 @@ def apply_interface_only_noise(
 
 
 # Noise mode options: 'full' (default), 'interface_only'
-NOISE_MODE = 'full'
+NOISE_MODE = 'interface_only'
 INTERFACE_MARGIN = 1.0  # How far from interface to include qubits
 
 
@@ -158,12 +158,12 @@ DECODERS = ['tesseract']#, 'tesseract']
 
 # Sampling configuration
 MAX_SHOTS = 500_000_000
-MAX_ERRORS = 100
+MAX_ERRORS = 1000
 NUM_WORKERS = 10
 RANDOM_SEED = 42
 
 # Output file
-OUTPUT_CSV = 'benchmark_data/spatial_hadamard_benchmark_y_only_tesseract_only.csv'
+OUTPUT_CSV = 'benchmark_data/spatial_hadamard_benchmark_y_only_tesseract_only_interface_only.csv'
 
 
 # =============================================================================
