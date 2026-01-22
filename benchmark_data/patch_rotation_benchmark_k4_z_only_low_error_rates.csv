@@ -1,0 +1,2 @@
+k,basis,distance,physical_error_rate,logical_error_rate,errors,shots,error_bar,decode_time
+4,z,9,0.00031622776601683794,1.0933333333333333e-07,164,1500000000,8.537498516527174e-09,4901.550870895386

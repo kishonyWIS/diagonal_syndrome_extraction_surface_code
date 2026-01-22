@@ -1,0 +1,7 @@
+k,circuit_type,graphlike_distance,circuit_distance
+1,N/Z Circuit,3,3
+1,Diagonal Circuit,3,3
+2,N/Z Circuit,5,5
+2,Diagonal Circuit,5,5
+3,N/Z Circuit,7,7
+3,Diagonal Circuit,7,7
