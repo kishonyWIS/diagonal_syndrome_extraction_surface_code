@@ -4,7 +4,7 @@ Benchmarking script for Patch Rotation circuits.
 
 Sweeps through circuit configurations, computing:
 - Graph-like distance for each configuration
-- Logical error rates using pymatching decoder
+- Logical error rates using correlated PyMatching decoder
 
 Uses sinter for parallelized sampling and decoding.
 
@@ -34,6 +34,61 @@ from patch_rotation_manual import (
     generate_crumble_url,
 )
 from tqec import NoiseModel
+import pymatching
+
+
+# =============================================================================
+# Correlated PyMatching Decoder
+# =============================================================================
+
+class CorrelatedPymatchingDecoder(sinter.Decoder):
+    """Sinter decoder wrapper for correlated PyMatching."""
+    
+    def decode_via_files(
+        self,
+        *,
+        num_shots: int,
+        num_dets: int,
+        num_obs: int,
+        dem_path: str,
+        dets_b8_in_path: str,
+        obs_predictions_b8_out_path: str,
+        tmp_dir: str,
+    ) -> None:
+        """Decode using file-based interface."""
+        import pathlib
+        
+        # Load DEM
+        dem = stim.DetectorErrorModel.from_file(dem_path)
+        
+        # Create matcher with correlations enabled
+        matcher = pymatching.Matching.from_detector_error_model(dem, enable_correlations=True)
+        
+        # Load detector data
+        dets = stim.read_shot_data_file(
+            path=dets_b8_in_path,
+            format='b8',
+            num_detectors=num_dets,
+            num_observables=0,
+        )
+        
+        # Decode with correlations enabled
+        predictions = matcher.decode_batch(dets, enable_correlations=True)
+        
+        # Write predictions
+        stim.write_shot_data_file(
+            data=predictions,
+            path=obs_predictions_b8_out_path,
+            format='b8',
+            num_observables=num_obs,
+        )
+
+
+# Custom decoder registry for sinter
+CUSTOM_DECODERS = {
+    'pymatching': 'pymatching',  # Built-in sinter decoder
+    'correlated_pymatching': CorrelatedPymatchingDecoder(),
+}
 
 
 # =============================================================================
@@ -51,8 +106,11 @@ MAX_ERRORS = 3000
 NUM_WORKERS = 10
 RANDOM_SEED = 42
 
-# Output file
-OUTPUT_CSV = 'benchmark_data/patch_rotation_benchmark_k4_z_only_low_error_rates.csv'
+# Decoder configuration (can be overridden via --decoder argument)
+DECODER = 'correlated_pymatching'  # Can be 'pymatching' or 'correlated_pymatching'
+
+# Output file (will be set in main() based on decoder)
+OUTPUT_CSV = 'benchmark_data/patch_rotation_benchmark_correlated_pymatching.csv'
 
 
 # =============================================================================
@@ -184,6 +242,7 @@ def run_sinter_for_single_task(
     max_shots: int,
     max_errors: int,
     num_workers: int,
+    decoder: str = 'correlated_pymatching',
 ) -> BenchmarkResult:
     """
     Run sinter benchmark for a single circuit.
@@ -198,20 +257,34 @@ def run_sinter_for_single_task(
     Returns:
         BenchmarkResult object
     """
+    # For pymatching and correlated_pymatching, we need a decomposed (graphlike) DEM
+    # Pre-compute it with decompose_errors=True as per PyMatching instructions
+    detector_error_model = None
+    if decoder in ['pymatching', 'correlated_pymatching']:
+        detector_error_model = circuit.detector_error_model(
+            decompose_errors=True,
+            ignore_decomposition_failures=True
+        )
+    
     task = sinter.Task(
         circuit=circuit,
-        decoder='pymatching',
+        decoder=decoder,
+        detector_error_model=detector_error_model,  # Use pre-computed DEM for pymatching decoders
         json_metadata=metadata,
     )
     
     # Run sinter
     start_time = time.time()
-    stats = sinter.collect(
-        tasks=[task],
-        max_shots=max_shots,
-        max_errors=max_errors,
-        num_workers=num_workers,
-    )
+    # Only pass custom_decoders if using a custom decoder
+    collect_kwargs = {
+        'tasks': [task],
+        'max_shots': max_shots,
+        'max_errors': max_errors,
+        'num_workers': num_workers,
+    }
+    if decoder in CUSTOM_DECODERS and isinstance(CUSTOM_DECODERS[decoder], sinter.Decoder):
+        collect_kwargs['custom_decoders'] = CUSTOM_DECODERS
+    stats = sinter.collect(**collect_kwargs)
     decode_time = time.time() - start_time
     
     # Process result
@@ -315,7 +388,7 @@ def run_benchmark(skip_distance: bool = True) -> list[BenchmarkResult]:
     print("Running Logical Error Rate Benchmarks with Sinter")
     print("=" * 70)
     print(f"Total tasks: {total_tasks}")
-    print(f"Decoder: pymatching")
+    print(f"Decoder: {DECODER}")
     print(f"Max shots per config: {MAX_SHOTS:,}")
     print(f"Max errors for early stopping: {MAX_ERRORS:,}")
     print(f"Number of workers: {NUM_WORKERS}")
@@ -364,6 +437,7 @@ def run_benchmark(skip_distance: bool = True) -> list[BenchmarkResult]:
                         max_shots=MAX_SHOTS,
                         max_errors=MAX_ERRORS,
                         num_workers=NUM_WORKERS,
+                        decoder=DECODER,
                     )
                     
                     if result:
@@ -443,11 +517,12 @@ def load_results_from_csv(filepath: str) -> list[dict]:
 # Plotting
 # =============================================================================
 
-def results_to_sinter_stats(results: list[dict]) -> list[sinter.TaskStats]:
+def results_to_sinter_stats(results: list[dict], decoder='correlated_pymatching') -> list[sinter.TaskStats]:
     """Convert results to sinter.TaskStats for plotting.
     
     Args:
         results: List of result dictionaries
+        decoder: Decoder name to use in TaskStats
         
     Returns:
         List of sinter.TaskStats objects
@@ -457,7 +532,7 @@ def results_to_sinter_stats(results: list[dict]) -> list[sinter.TaskStats]:
     for result in results:
         stats = sinter.TaskStats(
             strong_id=f"k{result['k']}_{result['basis']}_p{result['physical_error_rate']}",
-            decoder='pymatching',
+            decoder=decoder,
             json_metadata={
                 'p': result['physical_error_rate'],
                 'k': result['k'],
@@ -671,7 +746,8 @@ def plot_results(results: list[BenchmarkResult], output_dir: str = 'benchmark_pl
             'error_bar': r.error_bar,
         })
     
-    stats_list = results_to_sinter_stats(results_dicts)
+    # Use global DECODER variable (set in main())
+    stats_list = results_to_sinter_stats(results_dicts, decoder=DECODER)
     
     if not stats_list:
         print("No data to plot")
@@ -836,8 +912,11 @@ def save_crumble_urls_html(urls_dict: dict, output_dir: str = 'crumble_urls', ex
 
 def main():
     parser = argparse.ArgumentParser(description='Benchmark Patch Rotation circuits')
-    parser.add_argument('--csv', type=str, default=OUTPUT_CSV,
-                       help='Output CSV file path')
+    parser.add_argument('--csv', type=str, default=None,
+                       help='Output CSV file path (default: based on decoder)')
+    parser.add_argument('--decoder', type=str, default='correlated_pymatching',
+                       choices=['pymatching', 'correlated_pymatching'],
+                       help='Decoder to use (default: correlated_pymatching)')
     parser.add_argument('--plot-only', action='store_true',
                        help='Only plot from existing CSV (skip benchmarking)')
     parser.add_argument('--distance-only', action='store_true',
@@ -845,6 +924,14 @@ def main():
     parser.add_argument('--crumble-only', action='store_true',
                        help='Only generate Crumble URLs')
     args = parser.parse_args()
+    
+    # Set global decoder and output CSV
+    global DECODER, OUTPUT_CSV
+    DECODER = args.decoder
+    if args.csv is None:
+        OUTPUT_CSV = f'benchmark_data/patch_rotation_benchmark_{DECODER}.csv'
+    else:
+        OUTPUT_CSV = args.csv
     
     print("=" * 70)
     print("Patch Rotation Benchmark")
@@ -918,7 +1005,7 @@ def main():
     print(f"  k values: {K_VALUES}")
     print(f"  Basis values: {BASIS_VALUES}")
     print(f"  Physical error rates: {[f'{p:.6f}' for p in PHYSICAL_ERROR_RATES]}")
-    print(f"  Decoder: pymatching")
+    print(f"  Decoder: {DECODER}")
     print(f"  Max shots: {MAX_SHOTS:,}")
     print(f"  Max errors: {MAX_ERRORS:,}")
     print(f"  Num workers: {NUM_WORKERS}")

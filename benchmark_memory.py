@@ -6,6 +6,7 @@ import os
 import sys
 import importlib
 import argparse
+import time
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -22,12 +23,63 @@ from tqec import compile_block_graph, NoiseModel
 from tqec.utils.enums import Basis, Orientation
 from diagonal_plaquettes import DiagonalPlaquetteGenerator
 import sinter
+import stim
 try:
     import pymatching
     PYMATCHING_AVAILABLE = True
 except ImportError:
     PYMATCHING_AVAILABLE = False
     print("Warning: pymatching not available. Logical error rate calculation will be skipped.")
+
+
+class CorrelatedPymatchingDecoder(sinter.Decoder):
+    """Sinter decoder wrapper for correlated PyMatching."""
+    
+    def decode_via_files(
+        self,
+        *,
+        num_shots: int,
+        num_dets: int,
+        num_obs: int,
+        dem_path: str,
+        dets_b8_in_path: str,
+        obs_predictions_b8_out_path: str,
+        tmp_dir: str,
+    ) -> None:
+        """Decode using file-based interface."""
+        import pathlib
+        
+        # Load DEM
+        dem = stim.DetectorErrorModel.from_file(dem_path)
+        
+        # Create matcher with correlations enabled
+        matcher = pymatching.Matching.from_detector_error_model(dem, enable_correlations=True)
+        
+        # Load detector data
+        dets = stim.read_shot_data_file(
+            path=dets_b8_in_path,
+            format='b8',
+            num_detectors=num_dets,
+            num_observables=0,
+        )
+        
+        # Decode with correlations enabled
+        predictions = matcher.decode_batch(dets, enable_correlations=True)
+        
+        # Write predictions
+        stim.write_shot_data_file(
+            data=predictions,
+            path=obs_predictions_b8_out_path,
+            format='b8',
+            num_observables=num_obs,
+        )
+
+
+# Custom decoder registry for sinter
+CUSTOM_DECODERS = {
+    'pymatching': 'pymatching',  # Built-in sinter decoder
+    'correlated_pymatching': CorrelatedPymatchingDecoder(),
+}
 
 # Reload the translator module to pick up the new MEASUREMENT_SCHEDULE
 import tqec.plaquette.rpng.translators.default as default_translator
@@ -374,13 +426,20 @@ def create_diagonal_memory_circuit(k=2, return_both=False):
 
 
 
-def calculate_logical_error_rate(circuit, shots=100000, noise_levels=[0.001, 0.002, 0.005]):
+def calculate_logical_error_rate(circuit, shots=100000, noise_levels=[0.001, 0.002, 0.005], 
+                                  k=None, circuit_name=None, csv_filepath=None, first_write=False,
+                                  decoder='correlated_pymatching'):
     """Calculate logical error rate using sinter.
     
     Args:
         circuit: A noise-free stim circuit (noise will be added)
         shots: Number of shots per noise level
         noise_levels: List of physical error rates to test
+        k: k value (for incremental CSV saving)
+        circuit_name: Name of circuit type (for incremental CSV saving)
+        csv_filepath: Path to CSV file for incremental saving (None to skip)
+        first_write: If True, write CSV header (for incremental saving)
+        decoder: Decoder to use ('pymatching' or 'correlated_pymatching')
     """
     if not PYMATCHING_AVAILABLE:
         print("Skipping logical error rate calculation - pymatching not available")
@@ -397,20 +456,36 @@ def calculate_logical_error_rate(circuit, shots=100000, noise_levels=[0.001, 0.0
         noise_model = NoiseModel.uniform_depolarizing(noise_level)
         noisy_circuit = noise_model.noisy_circuit(circuit)
         
+        # For pymatching and correlated_pymatching, we need a decomposed (graphlike) DEM
+        # Pre-compute it with decompose_errors=True as per PyMatching instructions
+        detector_error_model = None
+        if decoder in ['pymatching', 'correlated_pymatching']:
+            detector_error_model = noisy_circuit.detector_error_model(
+                decompose_errors=True,
+                ignore_decomposition_failures=True
+            )
+        
         # Create a task for sinter
         task = sinter.Task(
             circuit=noisy_circuit,
-            decoder='pymatching',
+            decoder=decoder,
+            detector_error_model=detector_error_model,  # Use pre-computed DEM for pymatching decoders
             json_metadata={'noise_level': noise_level}
         )
         
-        # Collect statistics using sinter
-        stats = sinter.collect(
-            tasks=[task],
-            max_shots=shots,
-            max_errors=3000,
-            num_workers=10
-        )
+        # Collect statistics using sinter and measure decode time
+        start_time = time.time()
+        # Only pass custom_decoders if using a custom decoder
+        collect_kwargs = {
+            'tasks': [task],
+            'max_shots': shots,
+            'max_errors': 3000,
+            'num_workers': 10,
+        }
+        if decoder in CUSTOM_DECODERS and isinstance(CUSTOM_DECODERS[decoder], sinter.Decoder):
+            collect_kwargs['custom_decoders'] = CUSTOM_DECODERS
+        stats = sinter.collect(**collect_kwargs)
+        decode_time = time.time() - start_time
         
         # Extract results
         if stats:
@@ -421,22 +496,37 @@ def calculate_logical_error_rate(circuit, shots=100000, noise_levels=[0.001, 0.0
             # Calculate error bars using binomial distribution
             error_bar = np.sqrt(logical_error_rate * (1 - logical_error_rate) / stat.shots)
             
-            results[noise_level] = {
+            result = {
                 'logical_error_rate': logical_error_rate,
                 'logical_errors': logical_errors,
                 'shots': stat.shots,
-                'error_bar': error_bar
+                'error_bar': error_bar,
+                'decode_time': decode_time
             }
             
+            results[noise_level] = result
+            
             print(f"    Logical error rate: {logical_error_rate:.6f} ± {error_bar:.6f} ({logical_errors}/{stat.shots})")
+            
+            # Save incrementally to CSV if filepath provided
+            if csv_filepath and k is not None and circuit_name is not None:
+                append_error_rate_to_csv(k, circuit_name, noise_level, result, csv_filepath, write_header=first_write)
+                first_write = False
         else:
             print(f"    No statistics collected for noise level {noise_level}")
-            results[noise_level] = {
+            result = {
                 'logical_error_rate': 0.0,
                 'logical_errors': 0,
                 'shots': 0,
-                'error_bar': 0.0
+                'error_bar': 0.0,
+                'decode_time': decode_time
             }
+            results[noise_level] = result
+            
+            # Save incrementally even for failed results
+            if csv_filepath and k is not None and circuit_name is not None:
+                append_error_rate_to_csv(k, circuit_name, noise_level, result, csv_filepath, write_header=first_write)
+                first_write = False
     
     return results
 
@@ -625,11 +715,12 @@ def fit_and_plot_distance(ax, stats_list, group_func, x_func, plot_args_func, mi
         inset_ax.grid(True, alpha=0.3)
 
 
-def results_to_sinter_stats(results_data):
+def results_to_sinter_stats(results_data, decoder='correlated_pymatching'):
     """Convert results dictionary to list of sinter.TaskStats for plotting.
     
     Args:
         results_data: Dict with structure {k: {circuit_name: {noise_level: {logical_error_rate, logical_errors, shots, error_bar}}}}
+        decoder: Decoder name to use in TaskStats
         
     Returns:
         List of sinter.TaskStats objects
@@ -646,7 +737,7 @@ def results_to_sinter_stats(results_data):
                 # Create TaskStats object
                 stats = sinter.TaskStats(
                     strong_id=f"{circuit_name}_k{k}_p{noise_level}",
-                    decoder='pymatching',
+                    decoder=decoder,
                     json_metadata={
                         'p': noise_level,
                         'k': k,
@@ -669,8 +760,8 @@ def plot_logical_error_rates_multi_k(results_data, save_path="benchmark_plots/me
         print("Cannot create plot - missing data")
         return
     
-    # Convert to sinter stats format
-    stats_list = results_to_sinter_stats(results_data)
+    # Convert to sinter stats format (decoder name doesn't matter for plotting, but use default)
+    stats_list = results_to_sinter_stats(results_data, decoder='correlated_pymatching')
     
     if not stats_list:
         print("No data to plot")
@@ -751,16 +842,51 @@ def calculate_circuit_distance(circuit):
 # CSV Data Saving/Loading
 # =============================================================================
 
-def save_error_rates_to_csv(all_results, filepath="benchmark_data/memory_error_rates_k4.csv"):
+def append_error_rate_to_csv(k, circuit_name, noise_level, result, filepath, write_header=False):
+    """Append a single error rate result to CSV file.
+    
+    Args:
+        k: k value
+        circuit_name: Name of the circuit type
+        noise_level: Physical error rate
+        result: Dict with logical_error_rate, logical_errors, shots, error_bar
+        filepath: Path to CSV file
+        write_header: If True, write header row
+    """
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    
+    fieldnames = ['k', 'circuit_type', 'physical_error_rate', 'logical_error_rate', 'logical_errors', 'shots', 'error_bar', 'decode_time']
+    
+    mode = 'w' if write_header else 'a'
+    with open(filepath, mode, newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        if write_header:
+            writer.writeheader()
+        
+        writer.writerow({
+            'k': k,
+            'circuit_type': circuit_name,
+            'physical_error_rate': noise_level,
+            'logical_error_rate': result['logical_error_rate'],
+            'logical_errors': result['logical_errors'],
+            'shots': result['shots'],
+            'error_bar': result['error_bar'],
+            'decode_time': result.get('decode_time', 0.0),
+        })
+
+
+def save_error_rates_to_csv(all_results, filepath=None):
     """Save logical error rate results to CSV file.
     
     Args:
         all_results: Dict with structure {k: {circuit_name: {noise_level: {logical_error_rate, logical_errors, shots, error_bar}}}}
-        filepath: Path to save CSV file
+        filepath: Path to save CSV file (default: memory_error_rates_correlated_pymatching.csv)
     """
+    if filepath is None:
+        filepath = "benchmark_data/memory_error_rates_correlated_pymatching.csv"
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     
-    fieldnames = ['k', 'circuit_type', 'physical_error_rate', 'logical_error_rate', 'logical_errors', 'shots', 'error_bar']
+    fieldnames = ['k', 'circuit_type', 'physical_error_rate', 'logical_error_rate', 'logical_errors', 'shots', 'error_bar', 'decode_time']
     
     with open(filepath, 'w', newline='') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
@@ -777,6 +903,7 @@ def save_error_rates_to_csv(all_results, filepath="benchmark_data/memory_error_r
                         'logical_errors': result['logical_errors'],
                         'shots': result['shots'],
                         'error_bar': result['error_bar'],
+                        'decode_time': result.get('decode_time', 0.0),
                     })
     
     print(f"Saved error rate results to {filepath}")
@@ -835,6 +962,7 @@ def load_error_rates_from_csv(filepath="benchmark_data/memory_error_rates.csv"):
                 'logical_errors': int(row['logical_errors']),
                 'shots': int(row['shots']),
                 'error_bar': float(row['error_bar']),
+                'decode_time': float(row.get('decode_time', 0.0)),
             }
     
     print(f"Loaded error rate results from {filepath}")
@@ -945,7 +1073,7 @@ def main():
     """Main comparison function for N/Z vs diagonal circuits."""
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Compare N/Z vs diagonal surface code circuits')
-    parser.add_argument('--k-values', nargs='+', type=int, default=[4],
+    parser.add_argument('--k-values', nargs='+', type=int, default=[2,3,4],
                        help='k values to test (default: 1 2 3)')
     parser.add_argument('--shots', type=int, default=10000_000_000,
                        help='Number of shots for logical error rate calculation (default: 50000)')
@@ -963,6 +1091,9 @@ def main():
                        help='Load error rates from CSV file instead of recomputing')
     parser.add_argument('--plot-only', action='store_true',
                        help='Only generate plots from existing CSV data (skip all computations)')
+    parser.add_argument('--decoder', type=str, default='correlated_pymatching',
+                       choices=['pymatching', 'correlated_pymatching'],
+                       help='Decoder to use (default: correlated_pymatching)')
     
     args = parser.parse_args()
     
@@ -1106,10 +1237,29 @@ def main():
             print(f"Calculating logical error rates for k={k}...")
             k_results = {}
             
-            for name, circuit in circuits.items():
+            # Determine CSV filepath for incremental saving (include decoder name in filename)
+            if args.load_error_rates:
+                csv_filepath = args.load_error_rates
+            else:
+                decoder_suffix = args.decoder if args.decoder == 'correlated_pymatching' else 'pymatching'
+                csv_filepath = f"benchmark_data/memory_error_rates_{decoder_suffix}.csv"
+            # Write header only if file doesn't exist (first k value, first circuit)
+            first_write = not os.path.exists(csv_filepath)
+            
+            for idx, (name, circuit) in enumerate(circuits.items()):
                 print(f"  {name}:")
-                error_rates = calculate_logical_error_rate(circuit, shots=shots, noise_levels=noise_levels)
+                error_rates = calculate_logical_error_rate(
+                    circuit, 
+                    shots=shots, 
+                    noise_levels=noise_levels,
+                    k=k,
+                    circuit_name=name,
+                    csv_filepath=csv_filepath,
+                    first_write=first_write,
+                    decoder=args.decoder
+                )
                 k_results[name] = error_rates
+                first_write = False  # Only write header once (on first circuit of first k)
             
             all_results[k] = k_results
             print()
@@ -1168,9 +1318,14 @@ def main():
         print()
     
     if all_results:
-        if not args.load_error_rates:
-            print("=== Saving Error Rate Data ===")
-            save_error_rates_to_csv(all_results)
+        # Results are already saved incrementally, so only save if we loaded from CSV
+        # (in which case we might want to save a fresh copy)
+        if args.load_error_rates:
+            print("=== Saving Error Rate Data (from loaded data) ===")
+            csv_filepath = args.load_error_rates or "benchmark_data/memory_error_rates_correlated_pymatching.csv"
+            save_error_rates_to_csv(all_results, csv_filepath)
+        else:
+            print("=== Error Rate Data Already Saved Incrementally ===")
         print("=== Creating Logical Error Rate Plot ===")
         plot_logical_error_rates_multi_k(all_results)
         print()

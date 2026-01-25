@@ -5,6 +5,7 @@ import csv
 import os
 import sys
 import argparse
+import time
 import numpy as np
 import matplotlib.pyplot as plt
 sys.path.insert(0, 'venv/lib/python3.13/site-packages')
@@ -24,6 +25,56 @@ try:
     PYMATCHING_AVAILABLE = True
 except ImportError:
     PYMATCHING_AVAILABLE = False
+
+
+class CorrelatedPymatchingDecoder(sinter.Decoder):
+    """Sinter decoder wrapper for correlated PyMatching."""
+    
+    def decode_via_files(
+        self,
+        *,
+        num_shots: int,
+        num_dets: int,
+        num_obs: int,
+        dem_path: str,
+        dets_b8_in_path: str,
+        obs_predictions_b8_out_path: str,
+        tmp_dir: str,
+    ) -> None:
+        """Decode using file-based interface."""
+        import pathlib
+        
+        # Load DEM
+        dem = stim.DetectorErrorModel.from_file(dem_path)
+        
+        # Create matcher with correlations enabled
+        matcher = pymatching.Matching.from_detector_error_model(dem, enable_correlations=True)
+        
+        # Load detector data
+        dets = stim.read_shot_data_file(
+            path=dets_b8_in_path,
+            format='b8',
+            num_detectors=num_dets,
+            num_observables=0,
+        )
+        
+        # Decode with correlations enabled
+        predictions = matcher.decode_batch(dets, enable_correlations=True)
+        
+        # Write predictions
+        stim.write_shot_data_file(
+            data=predictions,
+            path=obs_predictions_b8_out_path,
+            format='b8',
+            num_observables=num_obs,
+        )
+
+
+# Custom decoder registry for sinter
+CUSTOM_DECODERS = {
+    'pymatching': 'pymatching',  # Built-in sinter decoder
+    'correlated_pymatching': CorrelatedPymatchingDecoder(),
+}
 
 # Modify MEASUREMENT_SCHEDULE BEFORE importing any tqec modules
 import tqec.plaquette.constants as constants
@@ -188,13 +239,14 @@ def compile_and_generate(graph, convention_name, convention, k=1, use_diagonal=F
         return None
 
 
-def calculate_logical_error_rate(circuit, shots=50000, noise_levels=[0.001, 0.002, 0.005]):
+def calculate_logical_error_rate(circuit, shots=50000, noise_levels=[0.001, 0.002, 0.005], decoder='correlated_pymatching'):
     """Calculate logical error rate using sinter.
     
     Args:
         circuit: A noise-free stim circuit (noise will be added)
         shots: Number of shots per noise level
         noise_levels: List of physical error rates to test
+        decoder: Decoder to use ('pymatching' or 'correlated_pymatching')
     """
     if not PYMATCHING_AVAILABLE:
         print("Skipping logical error rate calculation - pymatching not available")
@@ -211,20 +263,36 @@ def calculate_logical_error_rate(circuit, shots=50000, noise_levels=[0.001, 0.00
         noise_model = NoiseModel.uniform_depolarizing(noise_level)
         noisy_circuit = noise_model.noisy_circuit(circuit)
         
+        # For pymatching and correlated_pymatching, we need a decomposed (graphlike) DEM
+        # Pre-compute it with decompose_errors=True as per PyMatching instructions
+        detector_error_model = None
+        if decoder in ['pymatching', 'correlated_pymatching']:
+            detector_error_model = noisy_circuit.detector_error_model(
+                decompose_errors=True,
+                ignore_decomposition_failures=True
+            )
+        
         # Use sinter to collect statistics
         task = sinter.Task(
             circuit=noisy_circuit,
-            decoder='pymatching',
+            decoder=decoder,
+            detector_error_model=detector_error_model,  # Use pre-computed DEM for pymatching decoders
             json_metadata={'noise_level': noise_level}
         )
         
-        # Collect statistics using sinter
-        stats = sinter.collect(
-            tasks=[task],
-            max_shots=shots,
-            max_errors=3000,
-            num_workers=10
-        )
+        # Collect statistics using sinter and measure decode time
+        start_time = time.time()
+        # Only pass custom_decoders if using a custom decoder
+        collect_kwargs = {
+            'tasks': [task],
+            'max_shots': shots,
+            'max_errors': 3000,
+            'num_workers': 10,
+        }
+        if decoder in CUSTOM_DECODERS and isinstance(CUSTOM_DECODERS[decoder], sinter.Decoder):
+            collect_kwargs['custom_decoders'] = CUSTOM_DECODERS
+        stats = sinter.collect(**collect_kwargs)
+        decode_time = time.time() - start_time
         
         # Extract results
         if stats:
@@ -239,17 +307,19 @@ def calculate_logical_error_rate(circuit, shots=50000, noise_levels=[0.001, 0.00
                 'logical_error_rate': logical_error_rate,
                 'logical_errors': logical_errors,
                 'shots': stat.shots,
-                'error_bar': error_bar
+                'error_bar': error_bar,
+                'decode_time': decode_time
             }
             
-            print(f"    Logical error rate: {logical_error_rate:.6f} ± {error_bar:.6f} ({logical_errors}/{stat.shots})")
+            print(f"    Logical error rate: {logical_error_rate:.6f} ± {error_bar:.6f} ({logical_errors}/{stat.shots}), time={decode_time:.1f}s")
         else:
             print(f"    No statistics collected for noise level {noise_level}")
             results[noise_level] = {
                 'logical_error_rate': 0.0,
                 'logical_errors': 0,
                 'shots': 0,
-                'error_bar': 0.0
+                'error_bar': 0.0,
+                'decode_time': decode_time
             }
     
     return results
@@ -259,16 +329,20 @@ def calculate_logical_error_rate(circuit, shots=50000, noise_levels=[0.001, 0.00
 # CSV Data Saving/Loading
 # =============================================================================
 
-def save_error_rates_to_csv(all_error_rates, filepath="benchmark_data/x_junction_error_rates_k4.csv"):
+def save_error_rates_to_csv(all_error_rates, filepath=None, decoder='correlated_pymatching'):
     """Save logical error rate results to CSV file.
     
     Args:
         all_error_rates: Dict with structure {k: {circuit_type: {noise_level: {logical_error_rate, logical_errors, shots, error_bar}}}}
-        filepath: Path to save CSV file
+        filepath: Path to save CSV file (default: based on decoder name)
+        decoder: Decoder name for default filename
     """
+    if filepath is None:
+        decoder_suffix = decoder if decoder == 'correlated_pymatching' else 'pymatching'
+        filepath = f"benchmark_data/x_junction_error_rates_{decoder_suffix}.csv"
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     
-    fieldnames = ['k', 'circuit_type', 'physical_error_rate', 'logical_error_rate', 'logical_errors', 'shots', 'error_bar']
+    fieldnames = ['k', 'circuit_type', 'physical_error_rate', 'logical_error_rate', 'logical_errors', 'shots', 'error_bar', 'decode_time']
     
     with open(filepath, 'w', newline='') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
@@ -285,6 +359,7 @@ def save_error_rates_to_csv(all_error_rates, filepath="benchmark_data/x_junction
                         'logical_errors': result['logical_errors'],
                         'shots': result['shots'],
                         'error_bar': result['error_bar'],
+                        'decode_time': result.get('decode_time', 0.0),
                     })
     
     print(f"Saved error rate results to {filepath}")
@@ -348,6 +423,7 @@ def load_error_rates_from_csv(filepath="benchmark_data/x_junction_error_rates.cs
                 'logical_errors': int(row['logical_errors']),
                 'shots': int(row['shots']),
                 'error_bar': float(row['error_bar']),
+                'decode_time': float(row.get('decode_time', 0.0)),
             }
     
     print(f"Loaded error rate results from {filepath}")
@@ -412,11 +488,12 @@ def save_crumble_urls_html(urls_dict, output_dir="crumble_urls", experiment_name
     print(f"Saved Crumble URLs to {index_path}")
 
 
-def results_to_sinter_stats(results_data):
+def results_to_sinter_stats(results_data, decoder='correlated_pymatching'):
     """Convert results dictionary to list of sinter.TaskStats for plotting.
     
     Args:
         results_data: Dict with structure {k: {circuit_type: {noise_level: {logical_error_rate, logical_errors, shots, error_bar}}}}
+        decoder: Decoder name to use in TaskStats
     
     Returns:
         List of sinter.TaskStats objects
@@ -436,7 +513,7 @@ def results_to_sinter_stats(results_data):
                 # Create TaskStats object
                 stats = sinter.TaskStats(
                     strong_id=f"{circuit_type}_k{k}_p{noise_level}",
-                    decoder='pymatching',
+                    decoder=decoder,
                     json_metadata={
                         'p': noise_level,
                         'k': k,
@@ -575,8 +652,8 @@ def plot_logical_error_rates(data_dict, save_path="benchmark_plots/x_junction_er
         print("Cannot create error rate plot - missing data")
         return
     
-    # Convert to sinter stats format
-    stats_list = results_to_sinter_stats(data_dict)
+    # Convert to sinter stats format (decoder name doesn't matter for plotting, but use default)
+    stats_list = results_to_sinter_stats(data_dict, decoder='correlated_pymatching')
     
     if not stats_list:
         print("No data to plot")
@@ -637,11 +714,12 @@ def plot_logical_error_rates(data_dict, save_path="benchmark_plots/x_junction_er
     return fig
 
 
-def compare_results(data_by_k, include_error_rates=False, shots=500000, noise_levels=[0.001, 0.002, 0.005]):
+def compare_results(data_by_k, include_error_rates=False, shots=500000, noise_levels=[0.001, 0.002, 0.005], decoder='correlated_pymatching'):
     """Compare and print results side-by-side.
     
     Args:
         data_by_k: Dict with structure {k_value: {'standard': results, 'diagonal': results}}
+        decoder: Decoder to use ('pymatching' or 'correlated_pymatching')
     """
     print("\n" + "=" * 60)
     print("X-Junction Comparison: N/Z vs Diagonal Schedule")
@@ -689,7 +767,8 @@ def compare_results(data_by_k, include_error_rates=False, shots=500000, noise_le
                 standard_error_rates = calculate_logical_error_rate(
                     k_data['standard']['circuit'], 
                     shots=shots, 
-                    noise_levels=noise_levels
+                    noise_levels=noise_levels,
+                    decoder=decoder
                 )
                 all_error_rates[k]['standard'] = standard_error_rates
             
@@ -698,12 +777,13 @@ def compare_results(data_by_k, include_error_rates=False, shots=500000, noise_le
                 diagonal_error_rates = calculate_logical_error_rate(
                     k_data['diagonal']['circuit'], 
                     shots=shots, 
-                    noise_levels=noise_levels
+                    noise_levels=noise_levels,
+                    decoder=decoder
                 )
                 all_error_rates[k]['diagonal'] = diagonal_error_rates
         
         # Save results to CSV
-        save_error_rates_to_csv(all_error_rates)
+        save_error_rates_to_csv(all_error_rates, decoder=decoder)
         
         # Plot results
         plot_logical_error_rates(all_error_rates)
@@ -724,6 +804,9 @@ if __name__ == "__main__":
                        help='Only generate plots from existing CSV data (skip all computations)')
     parser.add_argument('--load-error-rates', type=str, default=None,
                        help='Path to CSV file with error rates (default: benchmark_data/x_junction_error_rates.csv)')
+    parser.add_argument('--decoder', type=str, default='correlated_pymatching',
+                       choices=['pymatching', 'correlated_pymatching'],
+                       help='Decoder to use (default: correlated_pymatching)')
     
     args = parser.parse_args()
     
@@ -836,7 +919,8 @@ if __name__ == "__main__":
         all_results, 
         include_error_rates=args.error_rates,
         shots=args.shots,
-        noise_levels=args.noise_levels
+        noise_levels=args.noise_levels,
+        decoder=args.decoder
     )
     
     print("\n" + "=" * 60)

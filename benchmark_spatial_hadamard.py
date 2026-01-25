@@ -472,9 +472,19 @@ def run_sinter_for_single_task(
     Returns:
         BenchmarkResult object
     """
+    # For pymatching and correlated_pymatching, we need a decomposed (graphlike) DEM
+    # Pre-compute it with decompose_errors=True as per PyMatching instructions
+    detector_error_model = None
+    if decoder_name in ['pymatching', 'correlated_pymatching']:
+        detector_error_model = circuit.detector_error_model(
+            decompose_errors=True,
+            ignore_decomposition_failures=True
+        )
+    
     task = sinter.Task(
         circuit=circuit,
         decoder=decoder_name,
+        detector_error_model=detector_error_model,  # Use pre-computed DEM for pymatching decoders
         json_metadata={**metadata, 'decoder': decoder_name},
     )
     

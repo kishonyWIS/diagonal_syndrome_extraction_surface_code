@@ -6,7 +6,7 @@ Consolidates plotting logic from benchmark_memory.py, benchmark_x_junction.py,
 benchmark_patch_rotation.py, benchmark_spatial_hadamard.py into a single module.
 
 Usage:
-    python plot_logical_error_rates.py --experiment memory --csv benchmark_data/memory_error_rates_backup.csv
+    python plot_logical_error_rates.py --experiment memory --csv benchmark_data/memory_error_rates_correlated_pymatching.csv
     python plot_logical_error_rates.py --experiment spatial_hadamard --csv ... --direction y --decoder tesseract
     python plot_logical_error_rates.py --experiment spatial_hadamard_interface --csv cluster_benchmark/combined_results.csv
     python plot_logical_error_rates.py --all
@@ -479,13 +479,20 @@ def plot_error_rate_panel(
 def plot_memory(
     csv_path: str,
     output_dir: str = 'benchmark_plots',
-    output_filename: str = 'memory_error_rates.pdf',
+    output_filename: str = None,
 ):
     """
     Plot memory experiment logical error rates.
     
     Compares N/Z (original) vs Diagonal circuit types.
     """
+    if output_filename is None:
+        # Auto-detect decoder type from CSV filename
+        if 'correlated_pymatching' in csv_path:
+            output_filename = 'memory_error_rates_correlated_pymatching.pdf'
+        else:
+            output_filename = 'memory_error_rates.pdf'
+    
     print(f"Loading data from {csv_path}")
     
     stats_list = load_csv_to_sinter_stats(
@@ -558,13 +565,20 @@ def plot_memory(
 def plot_x_junction(
     csv_path: str,
     output_dir: str = 'benchmark_plots',
-    output_filename: str = 'x_junction_error_rates.pdf',
+    output_filename: str = None,
 ):
     """
     Plot X-junction experiment logical error rates.
     
     Compares N/Z vs Diagonal circuit types.
     """
+    if output_filename is None:
+        # Auto-detect decoder type from CSV filename
+        if 'correlated_pymatching' in csv_path:
+            output_filename = 'x_junction_error_rates_correlated_pymatching.pdf'
+        else:
+            output_filename = 'x_junction_error_rates.pdf'
+    
     print(f"Loading data from {csv_path}")
     
     stats_list = load_csv_to_sinter_stats(
@@ -664,6 +678,9 @@ def plot_patch_rotation(
     for s in stats_list:
         s.json_metadata['p'] = s.json_metadata.pop('physical_error_rate', 0)
     
+    # Auto-detect decoder type from CSV filename for output naming
+    decoder_suffix = '_correlated_pymatching' if 'correlated_pymatching' in csv_path else ''
+    
     # Determine which bases to plot
     available_bases = sorted(set(s.json_metadata['basis'] for s in stats_list))
     if basis is not None:
@@ -710,7 +727,7 @@ def plot_patch_rotation(
         
         # Save
         os.makedirs(output_dir, exist_ok=True)
-        output_path = os.path.join(output_dir, f'patch_rotation_{b}.pdf')
+        output_path = os.path.join(output_dir, f'patch_rotation_{b}{decoder_suffix}.pdf')
         fig.set_dpi(150)
         fig.savefig(output_path, dpi=300, bbox_inches='tight')
         plt.close(fig)
@@ -856,8 +873,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s --experiment memory --csv benchmark_data/memory_error_rates_backup.csv
-  %(prog)s --experiment patch_rotation --csv benchmark_data/patch_rotation_benchmark_backup.csv --basis z
+  %(prog)s --experiment memory --csv benchmark_data/memory_error_rates_correlated_pymatching.csv
+  %(prog)s --experiment patch_rotation --csv benchmark_data/patch_rotation_benchmark_correlated_pymatching.csv --basis z
   %(prog)s --experiment spatial_hadamard --csv benchmark_data/spatial_hadamard_benchmark_backup.csv --direction y --decoder tesseract
   %(prog)s --experiment spatial_hadamard_interface --csv cluster_benchmark/combined_results.csv
   %(prog)s --all
@@ -901,11 +918,11 @@ Examples:
     args = parser.parse_args()
     
     if args.all:
-        # Default CSV paths
+        # Default CSV paths (using correlated PyMatching versions)
         default_csvs = {
-            'memory': 'benchmark_data/memory_error_rates_backup.csv',
-            'x_junction': 'benchmark_data/x_junction_error_rates_backup.csv',
-            'patch_rotation': 'benchmark_data/patch_rotation_benchmark_backup.csv',
+            'memory': 'benchmark_data/memory_error_rates_correlated_pymatching.csv',
+            'x_junction': 'benchmark_data/x_junction_error_rates_correlated_pymatching.csv',
+            'patch_rotation': 'benchmark_data/patch_rotation_benchmark_correlated_pymatching.csv',
             'spatial_hadamard': 'benchmark_data/spatial_hadamard_benchmark_backup.csv',
             'spatial_hadamard_interface': 'cluster_benchmark/combined_results.csv',
         }
