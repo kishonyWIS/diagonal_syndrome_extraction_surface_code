@@ -16,7 +16,7 @@ import argparse
 import csv
 import os
 from collections import defaultdict
-from typing import Callable
+from typing import Callable, Union, Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -143,6 +143,92 @@ def load_csv_to_sinter_stats(
     return stats_list
 
 
+def load_cluster_benchmark_csv(
+    csv_path: str,
+    experiment_type: str,
+) -> list[sinter.TaskStats]:
+    """
+    Load cluster benchmark CSV file and convert to list of sinter.TaskStats.
+    
+    Cluster benchmark CSV format:
+    - experiment_type, schedule, k, physical_error_rate, decoder, logical_error_rate, errors, shots, error_bar, ...
+    
+    Args:
+        csv_path: Path to cluster benchmark CSV file
+        experiment_type: Expected experiment type ('memory', 'x_junction', 'patch_rotation')
+        
+    Returns:
+        List of sinter.TaskStats objects with circuit_type mapped from schedule
+    """
+    stats_list = []
+    
+    with open(csv_path, 'r') as f:
+        reader = csv.DictReader(f)
+        
+        for row in reader:
+            try:
+                # Filter by experiment_type and decoder
+                if row.get('experiment_type') != experiment_type:
+                    continue
+                if row.get('decoder') != 'correlated_pymatching':
+                    continue
+                
+                # Map schedule to circuit_type
+                schedule = row.get('schedule', '').strip()
+                if schedule == 'diagonal':
+                    circuit_type = 'Diagonal Circuit'
+                else:
+                    # Empty or other schedule -> N/Z or standard
+                    if experiment_type == 'x_junction':
+                        circuit_type = 'N/Z Circuit'  # x_junction uses 'standard' = N/Z
+                    else:
+                        circuit_type = 'N/Z Circuit'
+                
+                # Extract metadata
+                k = int(row['k'])
+                physical_error_rate = float(row['physical_error_rate'])
+                errors = int(row['errors'])
+                shots = int(row['shots'])
+                
+                # Skip rows with no data
+                if shots == 0:
+                    continue
+                
+                # Build metadata
+                metadata = {
+                    'k': k,
+                    'circuit_type': circuit_type,
+                    'physical_error_rate': physical_error_rate,
+                    'p': physical_error_rate,  # Also include 'p' for compatibility
+                    'decoder': 'correlated_pymatching',
+                }
+                
+                # Handle patch_rotation differently (uses basis, not circuit_type)
+                if experiment_type == 'patch_rotation':
+                    if 'basis' in row and row['basis'].strip():
+                        metadata['basis'] = row['basis'].strip()
+                    # For patch_rotation, we don't use circuit_type, remove it
+                    metadata.pop('circuit_type', None)
+                    strong_id = f"patch_rotation_k{k}_basis{metadata.get('basis', 'unknown')}_p{physical_error_rate}"
+                else:
+                    # Create unique strong_id for memory and x_junction
+                    strong_id = f"{circuit_type}_k{k}_p{physical_error_rate}"
+                
+                stats = sinter.TaskStats(
+                    strong_id=strong_id,
+                    decoder='correlated_pymatching',
+                    json_metadata=metadata,
+                    shots=shots,
+                    errors=errors,
+                )
+                stats_list.append(stats)
+                
+            except (ValueError, KeyError) as e:
+                print(f"Warning: skipping row due to error: {e}")
+    
+    return stats_list
+
+
 def fit_and_plot_distance(
     ax: plt.Axes,
     stats_list: list[sinter.TaskStats],
@@ -150,7 +236,7 @@ def fit_and_plot_distance(
     x_func: Callable,
     plot_args_func: Callable,
     min_points: int = 2,
-    max_error_bar_ratio: float | None = 0.1,
+    max_error_bar_ratio: Optional[float] = 0.1,
     x_lim_left: float = X_LIM_LEFT,
 ) -> tuple[dict[str, float], list[tuple]]:
     """
@@ -399,7 +485,7 @@ def plot_error_rate_panel(
     style_items: list[tuple[str, dict]],
     add_inset: bool = True,
     min_fit_points: int = 2,
-    max_error_bar_ratio: float | None = 0.1,
+    max_error_bar_ratio: Optional[float] = 0.1,
     ylim_buffer_low: float = 0.1,
     ylim_buffer_high: float = 0.1,
 ) -> dict[str, float]:
@@ -485,24 +571,74 @@ def plot_memory(
     Plot memory experiment logical error rates.
     
     Compares N/Z (original) vs Diagonal circuit types.
+    If csv_path points to cluster benchmark data, also loads pymatching data from benchmark_data/.
     """
     if output_filename is None:
-        # Auto-detect decoder type from CSV filename
-        if 'correlated_pymatching' in csv_path:
-            output_filename = 'memory_error_rates_correlated_pymatching.pdf'
-        else:
-            output_filename = 'memory_error_rates.pdf'
+        output_filename = 'memory_error_rates.pdf'
     
     print(f"Loading data from {csv_path}")
     
-    stats_list = load_csv_to_sinter_stats(
-        csv_path,
-        metadata_columns=['k', 'circuit_type', 'physical_error_rate'],
-        errors_column='logical_errors',
-    )
-    
+    # Check if this is a cluster benchmark CSV - if so, create separate plots for each decoder
+    if 'cluster_benchmark' in csv_path or 'result_memory_from_cluster' in csv_path:
+        # Load correlated_pymatching from cluster benchmark
+        correlated_stats = load_cluster_benchmark_csv(csv_path, experiment_type='memory')
+        
+        # Load pymatching from benchmark_data
+        pymatching_csv = 'benchmark_data/memory_error_rates_backup.csv'
+        pymatching_stats = []
+        if os.path.exists(pymatching_csv):
+            print(f"Also loading pymatching data from {pymatching_csv}")
+            pymatching_stats = load_csv_to_sinter_stats(
+                pymatching_csv,
+                metadata_columns=['k', 'circuit_type', 'physical_error_rate'],
+                errors_column='logical_errors',
+            )
+        else:
+            print(f"Warning: {pymatching_csv} not found")
+        
+        # Plot correlated_pymatching
+        if correlated_stats:
+            _plot_memory_single_decoder(
+                correlated_stats, 'correlated_pymatching', output_dir,
+                'memory_error_rates_correlated_pymatching.pdf'
+            )
+        
+        # Plot pymatching
+        if pymatching_stats:
+            _plot_memory_single_decoder(
+                pymatching_stats, 'pymatching', output_dir,
+                'memory_error_rates_pymatching.pdf'
+            )
+        
+        return
+    else:
+        # Regular CSV - just plot what's in the file
+        stats_list = load_csv_to_sinter_stats(
+            csv_path,
+            metadata_columns=['k', 'circuit_type', 'physical_error_rate'],
+            errors_column='logical_errors',
+        )
+        
+        if not stats_list:
+            print("No data to plot")
+            return
+        
+        # Determine decoder from filename or default
+        decoder = 'correlated_pymatching' if 'correlated_pymatching' in csv_path else 'pymatching'
+        if output_filename is None:
+            output_filename = f'memory_error_rates_{decoder}.pdf'
+        
+        _plot_memory_single_decoder(stats_list, decoder, output_dir, output_filename)
+
+
+def _plot_memory_single_decoder(
+    stats_list: list[sinter.TaskStats],
+    decoder: str,
+    output_dir: str,
+    output_filename: str,
+):
+    """Helper function to plot memory data for a single decoder."""
     if not stats_list:
-        print("No data to plot")
         return
     
     # Rename metadata key for consistency
@@ -581,14 +717,67 @@ def plot_x_junction(
     
     print(f"Loading data from {csv_path}")
     
-    stats_list = load_csv_to_sinter_stats(
-        csv_path,
-        metadata_columns=['k', 'circuit_type', 'physical_error_rate'],
-        errors_column='logical_errors',
-    )
-    
+    # Check if this is a cluster benchmark CSV - if so, create separate plots for each decoder
+    if 'cluster_benchmark' in csv_path or 'result_x_junction_from_cluster' in csv_path:
+        # Load correlated_pymatching from cluster benchmark
+        correlated_stats = load_cluster_benchmark_csv(csv_path, experiment_type='x_junction')
+        
+        # Load pymatching from benchmark_data
+        pymatching_csv = 'benchmark_data/x_junction_error_rates_backup.csv'
+        pymatching_stats = []
+        if os.path.exists(pymatching_csv):
+            print(f"Also loading pymatching data from {pymatching_csv}")
+            pymatching_stats = load_csv_to_sinter_stats(
+                pymatching_csv,
+                metadata_columns=['k', 'circuit_type', 'physical_error_rate'],
+                errors_column='logical_errors',
+            )
+        else:
+            print(f"Warning: {pymatching_csv} not found")
+        
+        # Plot correlated_pymatching
+        if correlated_stats:
+            _plot_x_junction_single_decoder(
+                correlated_stats, 'correlated_pymatching', output_dir,
+                'x_junction_error_rates_correlated_pymatching.pdf'
+            )
+        
+        # Plot pymatching
+        if pymatching_stats:
+            _plot_x_junction_single_decoder(
+                pymatching_stats, 'pymatching', output_dir,
+                'x_junction_error_rates_pymatching.pdf'
+            )
+        
+        return
+    else:
+        # Regular CSV - just plot what's in the file
+        stats_list = load_csv_to_sinter_stats(
+            csv_path,
+            metadata_columns=['k', 'circuit_type', 'physical_error_rate'],
+            errors_column='logical_errors',
+        )
+        
+        if not stats_list:
+            print("No data to plot")
+            return
+        
+        # Determine decoder from filename or default
+        decoder = 'correlated_pymatching' if 'correlated_pymatching' in csv_path else 'pymatching'
+        if output_filename is None:
+            output_filename = f'x_junction_error_rates_{decoder}.pdf'
+        
+        _plot_x_junction_single_decoder(stats_list, decoder, output_dir, output_filename)
+
+
+def _plot_x_junction_single_decoder(
+    stats_list: list[sinter.TaskStats],
+    decoder: str,
+    output_dir: str,
+    output_filename: str,
+):
+    """Helper function to plot x_junction data for a single decoder."""
     if not stats_list:
-        print("No data to plot")
         return
     
     # Rename metadata key for consistency and normalize circuit_type names
@@ -601,7 +790,7 @@ def plot_x_junction(
         elif ct == 'diagonal':
             s.json_metadata['circuit_type_display'] = 'Diagonal'
         else:
-            s.json_metadata['circuit_type_display'] = ct
+            s.json_metadata['circuit_type_display'] = ct.replace(' Circuit', '')
     
     def group_func(s):
         circuit = s.json_metadata['circuit_type_display']
@@ -611,6 +800,7 @@ def plot_x_junction(
         return s.json_metadata['p']
     
     def plot_args_func(index, curve_id):
+        # Parse "N/Z k=1" or "Diagonal k=2"
         parts = curve_id.split()
         circuit_type_display = parts[0]
         k = int(parts[1].split('=')[1])
@@ -664,32 +854,86 @@ def plot_patch_rotation(
     """
     print(f"Loading data from {csv_path}")
     
-    stats_list = load_csv_to_sinter_stats(
-        csv_path,
-        metadata_columns=['k', 'basis', 'physical_error_rate'],
-        errors_column='errors',
-    )
-    
+    # Check if this is a cluster benchmark CSV - if so, create separate plots for each decoder
+    if 'cluster_benchmark' in csv_path or 'result_patch_rotation_from_cluster' in csv_path:
+        # Load correlated_pymatching from cluster benchmark
+        correlated_stats = load_cluster_benchmark_csv(csv_path, experiment_type='patch_rotation')
+        
+        # Load pymatching from benchmark_data
+        pymatching_csv = 'benchmark_data/patch_rotation_benchmark_backup.csv'
+        pymatching_stats = []
+        if os.path.exists(pymatching_csv):
+            print(f"Also loading pymatching data from {pymatching_csv}")
+            pymatching_stats = load_csv_to_sinter_stats(
+                pymatching_csv,
+                metadata_columns=['k', 'basis', 'physical_error_rate'],
+                errors_column='errors',
+            )
+        else:
+            print(f"Warning: {pymatching_csv} not found")
+        
+        # Determine which bases to plot
+        all_stats = correlated_stats + pymatching_stats
+        available_bases = sorted(set(s.json_metadata.get('basis') for s in all_stats if s.json_metadata.get('basis')))
+        if basis is not None:
+            bases_to_plot = [basis] if basis in available_bases else []
+        else:
+            bases_to_plot = available_bases
+        
+        # Plot correlated_pymatching
+        if correlated_stats:
+            _plot_patch_rotation_single_decoder(
+                correlated_stats, 'correlated_pymatching', output_dir, bases_to_plot
+            )
+        
+        # Plot pymatching
+        if pymatching_stats:
+            _plot_patch_rotation_single_decoder(
+                pymatching_stats, 'pymatching', output_dir, bases_to_plot
+            )
+        
+        return
+    else:
+        # Regular CSV - just plot what's in the file
+        stats_list = load_csv_to_sinter_stats(
+            csv_path,
+            metadata_columns=['k', 'basis', 'physical_error_rate'],
+            errors_column='errors',
+        )
+        
+        if not stats_list:
+            print("No data to plot")
+            return
+        
+        # Filter by basis if specified
+        if basis:
+            stats_list = [s for s in stats_list if s.json_metadata.get('basis') == basis]
+        
+        # Determine decoder from filename or default
+        decoder = 'correlated_pymatching' if 'correlated_pymatching' in csv_path else 'pymatching'
+        available_bases = sorted(set(s.json_metadata.get('basis') for s in stats_list if s.json_metadata.get('basis')))
+        
+        _plot_patch_rotation_single_decoder(stats_list, decoder, output_dir, available_bases)
+
+
+def _plot_patch_rotation_single_decoder(
+    stats_list: list[sinter.TaskStats],
+    decoder: str,
+    output_dir: str,
+    bases_to_plot: list[str],
+):
+    """Helper function to plot patch_rotation data for a single decoder."""
     if not stats_list:
-        print("No data to plot")
         return
     
     # Rename metadata key for consistency
     for s in stats_list:
         s.json_metadata['p'] = s.json_metadata.pop('physical_error_rate', 0)
     
-    # Auto-detect decoder type from CSV filename for output naming
-    decoder_suffix = '_correlated_pymatching' if 'correlated_pymatching' in csv_path else ''
-    
-    # Determine which bases to plot
-    available_bases = sorted(set(s.json_metadata['basis'] for s in stats_list))
-    if basis is not None:
-        bases_to_plot = [basis] if basis in available_bases else []
-    else:
-        bases_to_plot = available_bases
+    decoder_suffix = f'_{decoder}'
     
     for b in bases_to_plot:
-        basis_stats = [s for s in stats_list if s.json_metadata['basis'] == b]
+        basis_stats = [s for s in stats_list if s.json_metadata.get('basis') == b]
         
         if not basis_stats:
             continue
@@ -918,11 +1162,11 @@ Examples:
     args = parser.parse_args()
     
     if args.all:
-        # Default CSV paths (using correlated PyMatching versions)
+        # Default CSV paths (using cluster benchmark data for correlated PyMatching)
         default_csvs = {
-            'memory': 'benchmark_data/memory_error_rates_correlated_pymatching.csv',
-            'x_junction': 'benchmark_data/x_junction_error_rates_correlated_pymatching.csv',
-            'patch_rotation': 'benchmark_data/patch_rotation_benchmark_correlated_pymatching.csv',
+            'memory': 'cluster_benchmark/output/memory/result_memory_from_cluster.csv',
+            'x_junction': 'cluster_benchmark/output/x_junction/result_x_junction_from_cluster.csv',
+            'patch_rotation': 'cluster_benchmark/output/patch_rotation/result_patch_rotation_from_cluster.csv',
             'spatial_hadamard': 'benchmark_data/spatial_hadamard_benchmark_backup.csv',
             'spatial_hadamard_interface': 'cluster_benchmark/combined_results.csv',
         }
