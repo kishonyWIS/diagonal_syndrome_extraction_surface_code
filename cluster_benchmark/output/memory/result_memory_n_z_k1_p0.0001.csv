@@ -1,0 +1,2 @@
+experiment_type,schedule,noise_mode,k,physical_error_rate,decoder,logical_error_rate,errors,shots,error_bar,decode_time,distance,basis,direction,flag_config
+memory,N/Z,,1,0.0001,correlated_pymatching,6.0863107246265806e-05,3738,61416516,9.954541361776242e-07,31.436084985733032,,,,

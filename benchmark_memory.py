@@ -101,7 +101,16 @@ from tqec.compile.blocks.block import Block
 from tqec.compile.blocks.layers.atomic.plaquettes import PlaquetteLayer
 from tqec.compile.blocks.layers.composed.repeated import RepeatedLayer
 from tqec.utils.exceptions import TQECError
-from typing import override
+try:
+    from typing import override
+except ImportError:
+    # Python < 3.12 doesn't have typing.override, use typing_extensions or define a no-op decorator
+    try:
+        from typing_extensions import override
+    except ImportError:
+        # Fallback: define a no-op decorator
+        def override(func):
+            return func
 
 # Create a custom CSS compiler that handles schedule 7
 from tqec.plaquette.compilation.base import PlaquetteCompiler

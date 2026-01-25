@@ -1,0 +1,2 @@
+experiment_type,schedule,noise_mode,k,physical_error_rate,decoder,logical_error_rate,errors,shots,error_bar,decode_time,distance,basis,direction,flag_config
+spatial_hadamard,,full,1,0.01,correlated_pymatching,0.27759392641619623,5704,20548,0.003123999068302346,2.040407180786133,,,y,none
