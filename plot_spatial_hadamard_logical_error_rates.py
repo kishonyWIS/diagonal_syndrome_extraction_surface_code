@@ -48,17 +48,17 @@ def load_results(csv_path: str) -> list[dict]:
         reader = csv.DictReader(f)
         for row in reader:
             try:
-                results.append({
+            results.append({
                     'decoder': row['decoder'],
-                    'k': int(row['k']),
-                    'physical_error_rate': float(row['physical_error_rate']),
-                    'logical_error_rate': float(row['logical_error_rate']),
-                    'errors': int(row['errors']),
-                    'shots': int(row['shots']),
-                    'error_bar': float(row['error_bar']),
+                'k': int(row['k']),
+                'physical_error_rate': float(row['physical_error_rate']),
+                'logical_error_rate': float(row['logical_error_rate']),
+                'errors': int(row['errors']),
+                'shots': int(row['shots']),
+                'error_bar': float(row['error_bar']),
                     'flag_config': row['flag_config'],
                     'direction': row['direction'],
-                })
+            })
             except (ValueError, KeyError) as e:
                 print(f"Warning: skipping row due to error: {e}")
     return results
@@ -253,7 +253,7 @@ def plot_decoder_results(decoder: str, results: list[dict], output_dir: str):
     # Add second legend (flag configs) below first
     legend2 = ax.legend(handles=flag_handles, loc='upper left',
                         ncol=len(flag_configs_present), fontsize=18,
-                        bbox_to_anchor=(0.0, 0.91), handlelength=3.0,
+                        bbox_to_anchor=(0.0, 0.88), handlelength=3.0,
                         columnspacing=0.5, handletextpad=0.3)
     
     # Set axis properties (matching benchmark_spatial_hadamard.py)
