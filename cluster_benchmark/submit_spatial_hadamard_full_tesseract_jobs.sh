@@ -31,7 +31,16 @@ K_VALUES=(1 2 3 4)
 NOISE_VALUES=(0.01 0.005623413251903491 0.0031622776601683794 0.0017782794100389228 0.001 0.0005623413251903491 0.00031622776601683794 0.00017782794100389228 0.0001)
 
 # Sinter controls (match other cluster scripts by default)
-MAX_SHOTS=1000000
+#
+# We vary max shots with p because tesseract is much faster at low p.
+# Desired behavior:
+#   max_shots(p=0.01)   = MAX_SHOTS_AT_P_HIGH
+#   max_shots(p=0.0001) = 20 * MAX_SHOTS_AT_P_HIGH
+# with a gradual "inverse linear" ramp (linear in 1/p).
+MAX_SHOTS_AT_P_HIGH=1000000
+P_HIGH=0.01
+P_LOW=0.0001
+LOW_P_MULT=20
 MAX_ERRORS=3000
 NUM_WORKERS=4
 
@@ -44,7 +53,9 @@ echo "  Direction: $DIRECTION"
 echo "  Flag configs: ${FLAG_CONFIGS[*]}"
 echo "  k values: ${K_VALUES[*]}"
 echo "  Noise levels: ${#NOISE_VALUES[@]} values"
-echo "  Max shots: $MAX_SHOTS"
+echo "  Max shots: varies with p"
+echo "    at p=$P_HIGH  -> $MAX_SHOTS_AT_P_HIGH"
+echo "    at p=$P_LOW   -> $((MAX_SHOTS_AT_P_HIGH * LOW_P_MULT))"
 echo "  Max errors: $MAX_ERRORS"
 echo ""
 
@@ -58,10 +69,27 @@ for k in "${K_VALUES[@]}"; do
     for noise in "${NOISE_VALUES[@]}"; do
       JOB_NUM=$((JOB_NUM + 1))
 
+      # Compute per-noise max shots using a linear function of (1/p),
+      # such that multiplier is 1 at p=P_HIGH and LOW_P_MULT at p=P_LOW.
+      MAX_SHOTS_THIS=$(awk -v p="$noise" \
+                           -v max_hi="$MAX_SHOTS_AT_P_HIGH" \
+                           -v p_hi="$P_HIGH" \
+                           -v p_lo="$P_LOW" \
+                           -v mult_lo="$LOW_P_MULT" \
+                           'BEGIN{
+                              xh=1/p_hi; xl=1/p_lo;
+                              A=(mult_lo-1)/(xl-xh);
+                              B=1 - A*xh;
+                              m=A*(1/p)+B;
+                              if(m<1) m=1;
+                              if(m>mult_lo) m=mult_lo;
+                              printf "%.0f", max_hi*m;
+                            }')
+
       OUTPUT_FILE="cluster_benchmark/output/spatial_hadamard_full_tesseract/result_tesseract_full_${flag_config}_k${k}_p${noise}_${DIRECTION}.csv"
       JOB_NAME="sh_full_tess_${flag_config:0:4}_k${k}"
 
-      echo "[$JOB_NUM/$TOTAL_JOBS] Submitting: k=$k flag=$flag_config noise=$noise"
+      echo "[$JOB_NUM/$TOTAL_JOBS] Submitting: k=$k flag=$flag_config noise=$noise max_shots=$MAX_SHOTS_THIS"
 
       # Create a temporary wrapper script that exports environment variables and includes BSUB directives.
       # (We keep the same pattern as other cluster_benchmark/submit_*.sh scripts.)
@@ -87,6 +115,9 @@ cd "$PROJECT_DIR_ABS"
 module load Python/3.11.3-GCCcore-12.3.0
 source venv/bin/activate
 
+# Ensure reruns don't append duplicate rows.
+rm -f "$OUTPUT_FILE"
+
 python3 cluster_benchmark/run_single_benchmark.py \\
   --decoder "$DECODER" \\
   --k $k \\
@@ -94,7 +125,7 @@ python3 cluster_benchmark/run_single_benchmark.py \\
   --flag-config "$flag_config" \\
   --direction "$DIRECTION" \\
   --noise-mode "$NOISE_MODE" \\
-  --max-shots $MAX_SHOTS \\
+  --max-shots $MAX_SHOTS_THIS \\
   --max-errors $MAX_ERRORS \\
   --num-workers $NUM_WORKERS \\
   --output "$OUTPUT_FILE"
