@@ -26,6 +26,14 @@ try:
 except ImportError:
     PYMATCHING_AVAILABLE = False
 
+# Optional tesseract import
+try:
+    import tesseract_decoder.tesseract as tesseract
+    TESSERACT_AVAILABLE = True
+except ImportError:
+    TESSERACT_AVAILABLE = False
+    tesseract = None
+
 
 class CorrelatedPymatchingDecoder(sinter.Decoder):
     """Sinter decoder wrapper for correlated PyMatching."""
@@ -70,11 +78,60 @@ class CorrelatedPymatchingDecoder(sinter.Decoder):
         )
 
 
+if TESSERACT_AVAILABLE:
+    class TesseractDecoder(sinter.Decoder):
+        """Sinter decoder wrapper for Tesseract hypergraph decoder."""
+
+        def decode_via_files(
+            self,
+            *,
+            num_shots: int,
+            num_dets: int,
+            num_obs: int,
+            dem_path: str,
+            dets_b8_in_path: str,
+            obs_predictions_b8_out_path: str,
+            tmp_dir: str,
+        ) -> None:
+            """Decode using file-based interface."""
+            # Load DEM (full, not decomposed)
+            dem = stim.DetectorErrorModel.from_file(dem_path)
+
+            tesseract_config = tesseract.TesseractConfig(
+                dem=dem,
+                pqlimit=200_000,
+                det_beam=15,
+                beam_climbing=True,
+                det_orders=[],
+                no_revisit_dets=True,
+            )
+            decoder = tesseract.TesseractDecoder(tesseract_config)
+
+            dets = stim.read_shot_data_file(
+                path=dets_b8_in_path,
+                format='b8',
+                num_detectors=num_dets,
+                num_observables=0,
+            )
+
+            predictions = decoder.decode_batch(dets)
+
+            stim.write_shot_data_file(
+                data=predictions,
+                path=obs_predictions_b8_out_path,
+                format='b8',
+                num_observables=num_obs,
+            )
+
+
 # Custom decoder registry for sinter
 CUSTOM_DECODERS = {
     'pymatching': 'pymatching',  # Built-in sinter decoder
     'correlated_pymatching': CorrelatedPymatchingDecoder(),
 }
+
+if TESSERACT_AVAILABLE:
+    CUSTOM_DECODERS['tesseract'] = TesseractDecoder()
 
 # Modify MEASUREMENT_SCHEDULE BEFORE importing any tqec modules
 import tqec.plaquette.constants as constants
@@ -166,8 +223,11 @@ def calculate_logical_error_rate(circuit, shots=100000, noise_levels=[0.001], de
         noise_levels: List of physical error rates to test
         decoder: Decoder to use ('pymatching' or 'correlated_pymatching')
     """
-    if not PYMATCHING_AVAILABLE:
+    if decoder in ('pymatching', 'correlated_pymatching') and not PYMATCHING_AVAILABLE:
         print("Skipping logical error rate calculation - pymatching not available")
+        return {}
+    if decoder == 'tesseract' and not TESSERACT_AVAILABLE:
+        print("Skipping logical error rate calculation - tesseract_decoder not available")
         return {}
     
     print(f"Calculating logical error rate with {shots} shots...")
@@ -181,8 +241,8 @@ def calculate_logical_error_rate(circuit, shots=100000, noise_levels=[0.001], de
         noise_model = NoiseModel.uniform_depolarizing(noise_level)
         noisy_circuit = noise_model.noisy_circuit(circuit)
         
-        # For pymatching and correlated_pymatching, we need a decomposed (graphlike) DEM
-        # Pre-compute it with decompose_errors=True as per PyMatching instructions
+        # For pymatching and correlated_pymatching, we need a decomposed (graphlike) DEM.
+        # For tesseract, we pass the full DEM (so leave detector_error_model=None).
         detector_error_model = None
         if decoder in ['pymatching', 'correlated_pymatching']:
             detector_error_model = noisy_circuit.detector_error_model(
@@ -252,7 +312,12 @@ def save_error_rates_to_csv(all_error_rates, filepath=None, decoder='correlated_
         decoder: Decoder name for default filename
     """
     if filepath is None:
-        decoder_suffix = decoder if decoder == 'correlated_pymatching' else 'pymatching'
+        if decoder == 'correlated_pymatching':
+            decoder_suffix = 'correlated_pymatching'
+        elif decoder == 'pymatching':
+            decoder_suffix = 'pymatching'
+        else:
+            decoder_suffix = decoder
         filepath = f"benchmark_data/rectangular_memory_error_rates_{decoder_suffix}.csv"
     
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
@@ -328,8 +393,11 @@ def main():
     parser.add_argument('--noise-levels', nargs='+', type=float,
                        default=[0.001],
                        help='Physical error rates to test (default: 0.001)')
+    decoder_choices = ['pymatching', 'correlated_pymatching']
+    if TESSERACT_AVAILABLE:
+        decoder_choices.append('tesseract')
     parser.add_argument('--decoder', type=str, default='correlated_pymatching',
-                       choices=['pymatching', 'correlated_pymatching'],
+                       choices=decoder_choices,
                        help='Decoder to use (default: correlated_pymatching)')
     parser.add_argument('--load-error-rates', type=str, default=None,
                        help='Load error rates from CSV file instead of recomputing')
@@ -418,8 +486,7 @@ def main():
             k_error_rates = {}
             
             # Determine CSV filepath for saving
-            decoder_suffix = args.decoder if args.decoder == 'correlated_pymatching' else 'pymatching'
-            csv_filepath = f"benchmark_data/rectangular_memory_error_rates_{decoder_suffix}.csv"
+            csv_filepath = f"benchmark_data/rectangular_memory_error_rates_{args.decoder}.csv"
             
             # Standard (N/Z) circuit
             print("\nN/Z Circuit:")

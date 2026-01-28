@@ -289,10 +289,9 @@ def fit_and_plot_distance(
         # Sort by physical error rate
         points.sort(key=lambda x: x[0])
         
+        # Select fit points: use the lowest-p points.
         if len(points) < min_points:
             continue
-        
-        # Use the lowest-p points for fitting
         fit_points = points[:min_points]
         
         # Fit in log-log space
@@ -300,7 +299,7 @@ def fit_and_plot_distance(
         log_p_logical = np.array([np.log(pt[1]) for pt in fit_points])
         
         # Weighted fit: weight = (p_logical / error_bar)^2
-        weights = np.array([(pt[1] / pt[2])**2 for pt in fit_points])
+        weights = np.array([(pt[1] / max(pt[2], 1e-300))**2 for pt in fit_points])
         
         slope, intercept = np.polyfit(log_p, log_p_logical, 1, w=weights)
         d_eff = 2 * slope - 1
@@ -891,7 +890,6 @@ def plot_patch_rotation(
             _plot_patch_rotation_single_decoder(
                 pymatching_stats, 'pymatching', output_dir, bases_to_plot
             )
-        
         return
     else:
         # Regular CSV - just plot what's in the file
