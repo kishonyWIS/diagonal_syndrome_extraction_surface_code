@@ -9,6 +9,7 @@ Usage:
     python plot_logical_error_rates.py --experiment memory --csv benchmark_data/memory_error_rates_correlated_pymatching.csv
     python plot_logical_error_rates.py --experiment spatial_hadamard --csv ... --direction y --decoder tesseract
     python plot_logical_error_rates.py --experiment spatial_hadamard_interface --csv cluster_benchmark/combined_results.csv
+    python plot_logical_error_rates.py --experiment spatial_hadamard_full_tesseract --csv cluster_benchmark/output/spatial_hadamard_full_tesseract/result_spatial_hadamard_full_tesseract_from_cluster.csv
     python plot_logical_error_rates.py --all
 """
 
@@ -1105,6 +1106,25 @@ def plot_spatial_hadamard_interface(
     )
 
 
+def plot_spatial_hadamard_full_tesseract(
+    csv_path: str,
+    output_dir: str = 'benchmark_plots',
+    direction: str = 'y',
+):
+    """
+    Plot spatial Hadamard with full noise, decoded using tesseract (from cluster_benchmark).
+
+    Same format as plot_spatial_hadamard but with '_full' suffix in filename.
+    """
+    plot_spatial_hadamard(
+        csv_path=csv_path,
+        output_dir=output_dir,
+        direction=direction,
+        decoder='tesseract',
+        filename_suffix='_full',
+    )
+
+
 # =============================================================================
 # CLI Interface
 # =============================================================================
@@ -1119,13 +1139,21 @@ Examples:
   %(prog)s --experiment patch_rotation --csv benchmark_data/patch_rotation_benchmark_correlated_pymatching.csv --basis z
   %(prog)s --experiment spatial_hadamard --csv benchmark_data/spatial_hadamard_benchmark_backup.csv --direction y --decoder tesseract
   %(prog)s --experiment spatial_hadamard_interface --csv cluster_benchmark/combined_results.csv
+  %(prog)s --experiment spatial_hadamard_full_tesseract --csv cluster_benchmark/output/spatial_hadamard_full_tesseract/result_spatial_hadamard_full_tesseract_from_cluster.csv
   %(prog)s --all
         """
     )
     
     parser.add_argument(
         '--experiment', '-e',
-        choices=['memory', 'x_junction', 'patch_rotation', 'spatial_hadamard', 'spatial_hadamard_interface'],
+        choices=[
+            'memory',
+            'x_junction',
+            'patch_rotation',
+            'spatial_hadamard',
+            'spatial_hadamard_interface',
+            'spatial_hadamard_full_tesseract',
+        ],
         help='Experiment type to plot'
     )
     parser.add_argument(
@@ -1167,6 +1195,7 @@ Examples:
             'patch_rotation': 'cluster_benchmark/output/patch_rotation/result_patch_rotation_from_cluster.csv',
             'spatial_hadamard': 'benchmark_data/spatial_hadamard_benchmark_backup.csv',
             'spatial_hadamard_interface': 'cluster_benchmark/combined_results.csv',
+            'spatial_hadamard_full_tesseract': 'cluster_benchmark/output/spatial_hadamard_full_tesseract/result_spatial_hadamard_full_tesseract_from_cluster.csv',
         }
         
         for exp, csv_path in default_csvs.items():
@@ -1185,6 +1214,8 @@ Examples:
                     plot_spatial_hadamard(csv_path, args.output_dir)
                 elif exp == 'spatial_hadamard_interface':
                     plot_spatial_hadamard_interface(csv_path, args.output_dir)
+                elif exp == 'spatial_hadamard_full_tesseract':
+                    plot_spatial_hadamard_full_tesseract(csv_path, args.output_dir)
             else:
                 print(f"Skipping {exp}: {csv_path} not found")
     
@@ -1204,6 +1235,9 @@ Examples:
         elif args.experiment == 'spatial_hadamard_interface':
             plot_spatial_hadamard_interface(args.csv, args.output_dir,
                                             direction=args.direction, decoder=args.decoder)
+        elif args.experiment == 'spatial_hadamard_full_tesseract':
+            plot_spatial_hadamard_full_tesseract(args.csv, args.output_dir,
+                                                 direction=args.direction or 'y')
     else:
         parser.print_help()
 
