@@ -22,6 +22,7 @@ from typing import Callable, Union, Optional
 import matplotlib.pyplot as plt
 import numpy as np
 import sinter
+from matplotlib.legend import Legend
 from matplotlib.lines import Line2D
 from matplotlib.ticker import MaxNLocator, LogLocator, NullFormatter
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
@@ -69,6 +70,21 @@ X_LIM_LEFT = 7e-5
 FIT_LINE_ALPHA = 0.25
 INSET_SIZE = "30%"
 INSET_OFFSET = 0.12
+
+# Extra comparison markers (rectangular memory @ p=1e-3).
+RECTANGULAR_COMPARISON_P = 1e-3
+RECTANGULAR_COMPARISON_MARKER = 'X'
+RECTANGULAR_COMPARISON_MARKER_SIZE = 90  # scatter "area" in points^2
+RECTANGULAR_COMPARISON_ALPHA = 0.9
+RECTANGULAR_COMPARISON_LEGEND_LABEL = r"$2\times 1\times 1$ memory"
+
+# Legend placement constants (axes fraction coordinates).
+# The style legend sits below the k legend using this anchor y-value.
+DUAL_LEGEND_STYLE_ANCHOR_Y = 0.91
+# Place the rectangular-memory legend below the style legend with the same
+# vertical spacing as between the k legend (top) and the style legend.
+RECTANGULAR_COMPARISON_LEGEND_X = 0.021
+RECTANGULAR_COMPARISON_LEGEND_Y = 2 * DUAL_LEGEND_STYLE_ANCHOR_Y - 1.025
 
 
 # =============================================================================
@@ -228,6 +244,126 @@ def load_cluster_benchmark_csv(
                 print(f"Warning: skipping row due to error: {e}")
     
     return stats_list
+
+
+def load_rectangular_memory_diagonal_points(
+    decoder: str,
+    p: float = RECTANGULAR_COMPARISON_P,
+    csv_dir: str = 'benchmark_data',
+) -> dict[int, float]:
+    """
+    Load rectangular-memory diagonal-schedule points for a given decoder at a fixed p.
+
+    Expected filename: benchmark_data/rectangular_memory_error_rates_<decoder>.csv
+    Expected columns: k, circuit_type, physical_error_rate, logical_error_rate, ...
+
+    Returns:
+        Dict mapping k -> logical_error_rate (only y>0 points).
+    """
+    csv_path = os.path.join(csv_dir, f"rectangular_memory_error_rates_{decoder}.csv")
+    if not os.path.exists(csv_path):
+        return {}
+
+    out: dict[int, float] = {}
+    with open(csv_path, 'r') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                circuit_type = (row.get('circuit_type') or '').strip().lower()
+                if circuit_type not in ('diagonal circuit', 'diagonal'):
+                    continue
+
+                p_row = float(row['physical_error_rate'])
+                if not np.isclose(p_row, p, rtol=0.0, atol=0.0):
+                    continue
+
+                k = int(row['k'])
+                y = float(row['logical_error_rate'])
+                if y <= 0:
+                    continue
+
+                out[k] = y
+            except (KeyError, ValueError):
+                continue
+    return out
+
+
+def overlay_rectangular_memory_diagonal_points(
+    ax: plt.Axes,
+    decoder: str,
+    direction: str,
+    p: float = RECTANGULAR_COMPARISON_P,
+) -> bool:
+    """
+    Overlay rectangular-memory diagonal-schedule points on spatial_hadamard plots.
+
+    Only adds points for the y-direction (as requested).
+    """
+    if direction != 'y':
+        return False
+
+    pts = load_rectangular_memory_diagonal_points(decoder=decoder, p=p)
+    if not pts:
+        return False
+
+    y_values = []
+    for k, y in sorted(pts.items()):
+        color = K_COLORS.get(k, 'gray')
+        ax.scatter(
+            [p],
+            [y],
+            marker=RECTANGULAR_COMPARISON_MARKER,
+            s=RECTANGULAR_COMPARISON_MARKER_SIZE,
+            c=[color],
+            edgecolors='black',
+            alpha=RECTANGULAR_COMPARISON_ALPHA,
+            linewidths=1.6,
+            zorder=6,
+        )
+        y_values.append(y)
+
+    # Ensure points aren't clipped by y-limits chosen from the main dataset.
+    if y_values:
+        cur_ymin, cur_ymax = ax.get_ylim()
+        y_min2 = min(cur_ymin, min(y_values) * 0.8)
+        y_max2 = max(cur_ymax, max(y_values) * 1.2)
+        if y_min2 > 0 and y_max2 > 0:
+            ax.set_ylim(y_min2, y_max2)
+
+    return True
+
+
+def _add_rectangular_memory_comparison_legend(ax: plt.Axes) -> None:
+    """
+    Add a third legend entry for the rectangular-memory comparison marker.
+
+    This is intended to appear below the k legend and the style legend.
+    """
+    handle = Line2D(
+        [0], [0],
+        linestyle='None',
+        marker=RECTANGULAR_COMPARISON_MARKER,
+        markersize=9,
+        markerfacecolor='gray',
+        markeredgecolor='black',
+        markeredgewidth=1.6,
+        label=RECTANGULAR_COMPARISON_LEGEND_LABEL,
+    )
+
+    # Place below the style legend (which uses bbox_to_anchor y≈0.91).
+    legend3 = Legend(
+        ax,
+        handles=[handle],
+        labels=[RECTANGULAR_COMPARISON_LEGEND_LABEL],
+        loc='upper left',
+        bbox_to_anchor=(RECTANGULAR_COMPARISON_LEGEND_X, RECTANGULAR_COMPARISON_LEGEND_Y),
+        fontsize=LEGEND_FONT_SIZE,
+        frameon=True,
+        handlelength=1.0,
+        handletextpad=0.4,
+        borderaxespad=0.0,
+    )
+    ax.add_artist(legend3)
 
 
 def fit_and_plot_distance(
@@ -470,7 +606,7 @@ def _create_dual_legend(
         ax.legend(
             handles=style_handles, loc='upper left',
             ncol=len(style_items), fontsize=LEGEND_FONT_SIZE,
-            bbox_to_anchor=(0.0, 0.91), handlelength=2.0,
+            bbox_to_anchor=(0.0, DUAL_LEGEND_STYLE_ANCHOR_Y), handlelength=2.0,
             columnspacing=0.5, handletextpad=0.3
         )
 
@@ -1017,6 +1153,13 @@ def plot_spatial_hadamard(
     
     for dec in decoders_to_plot:
         for dir_ in directions_to_plot:
+            # The non-full spatial Hadamard Tesseract plots have been replaced by the
+            # dedicated full-noise tesseract plot. Skip generating the legacy outputs:
+            #   spatial_hadamard_tesseract_x.pdf
+            #   spatial_hadamard_tesseract_y.pdf
+            if dec == 'tesseract' and filename_suffix == '':
+                continue
+
             filtered_stats = [
                 s for s in stats_list
                 if s.json_metadata['direction'] == dir_ and s.json_metadata['decoder'] == dec
@@ -1076,10 +1219,20 @@ def plot_spatial_hadamard(
                 ylim_buffer_low=ylim_buffer_low,
                 ylim_buffer_high=ylim_buffer_high,
             )
+
+            # Add rectangular-memory comparison markers (diagonal schedule only).
+            # Note: these CSVs only contain points at p=1e-3 on purpose.
+            # Do NOT add these markers to the interface-noise plots.
+            if filename_suffix != '_interface':
+                did_overlay = overlay_rectangular_memory_diagonal_points(ax, decoder=dec, direction=dir_)
+                if did_overlay:
+                    _add_rectangular_memory_comparison_legend(ax)
             
             # Save
             os.makedirs(output_dir, exist_ok=True)
-            output_path = os.path.join(output_dir, f'spatial_hadamard_{dec}_{dir_}{filename_suffix}.pdf')
+            # Rename: spatial_hadamard_tesseract_y_full.pdf -> spatial_hadamard_tesseract_y.pdf
+            save_suffix = '' if (dec == 'tesseract' and filename_suffix == '_full') else filename_suffix
+            output_path = os.path.join(output_dir, f'spatial_hadamard_{dec}_{dir_}{save_suffix}.pdf')
             fig.set_dpi(150)
             fig.savefig(output_path, dpi=300, bbox_inches='tight')
             plt.close(fig)
@@ -1114,7 +1267,7 @@ def plot_spatial_hadamard_full_tesseract(
     """
     Plot spatial Hadamard with full noise, decoded using tesseract (from cluster_benchmark).
 
-    Same format as plot_spatial_hadamard but with '_full' suffix in filename.
+    Saved as spatial_hadamard_tesseract_<direction>.pdf (without a '_full' suffix).
     """
     plot_spatial_hadamard(
         csv_path=csv_path,
@@ -1137,7 +1290,7 @@ def main():
 Examples:
   %(prog)s --experiment memory --csv benchmark_data/memory_error_rates_correlated_pymatching.csv
   %(prog)s --experiment patch_rotation --csv benchmark_data/patch_rotation_benchmark_correlated_pymatching.csv --basis z
-  %(prog)s --experiment spatial_hadamard --csv benchmark_data/spatial_hadamard_benchmark_backup.csv --direction y --decoder tesseract
+  %(prog)s --experiment spatial_hadamard --csv benchmark_data/spatial_hadamard_benchmark_backup.csv --direction y --decoder correlated_pymatching
   %(prog)s --experiment spatial_hadamard_interface --csv cluster_benchmark/combined_results.csv
   %(prog)s --experiment spatial_hadamard_full_tesseract --csv cluster_benchmark/output/spatial_hadamard_full_tesseract/result_spatial_hadamard_full_tesseract_from_cluster.csv
   %(prog)s --all
