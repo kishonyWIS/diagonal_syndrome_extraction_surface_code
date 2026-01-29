@@ -119,6 +119,7 @@ source venv/bin/activate
 rm -f "$OUTPUT_FILE"
 
 python3 cluster_benchmark/run_single_benchmark.py \\
+  --experiment spatial_hadamard \\
   --decoder "$DECODER" \\
   --k $k \\
   --noise $noise \\

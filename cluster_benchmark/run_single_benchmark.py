@@ -23,6 +23,10 @@ import tesseract_decoder.tesseract as tesseract
 PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_DIR)
 
+# Set MEASUREMENT_SCHEDULE before any tqec code that uses it (e.g. rectangular_memory)
+import tqec.plaquette.constants as _tqec_constants
+_tqec_constants.MEASUREMENT_SCHEDULE = 8
+
 from spatial_hadamard_manual_construction import (
     generate_spatial_hadamard_circuit,
 )
@@ -256,7 +260,7 @@ def generate_circuit_for_config(
     k: int,
 ) -> stim.Circuit:
     """Generate a spatial Hadamard circuit for the given configuration (without noise, compacted).
-    
+
     Args:
         direction: 'x' or 'y'
         flag_config: 'all', 'partial', or 'none'
@@ -269,11 +273,38 @@ def generate_circuit_for_config(
         noise_model=None,
         flag_config=flag_config,
     )
-    
+
     # Compact the circuit (ASAP + ALAP scheduling)
     circuit_after = compact_and_delay_init(circuit_before)
-    
+
     return circuit_after
+
+
+def generate_rectangular_memory_circuit(k: int, schedule: str) -> stim.Circuit:
+    """Generate rectangular memory circuit (two ZXZ cubes + pipe) for the given schedule (without noise, compacted).
+
+    Args:
+        k: Scaling factor
+        schedule: 'diagonal' or 'N/Z'
+    """
+    from benchmark_rectangular_memory import (
+        create_rectangular_memory_block_graph,
+        compile_and_generate,
+    )
+    from benchmark_memory import create_diagonal_convention
+    from tqec.compile.convention import FIXED_BULK_CONVENTION
+
+    graph = create_rectangular_memory_block_graph()
+    if schedule == "diagonal":
+        convention = create_diagonal_convention()
+        result = compile_and_generate(graph, "Diagonal", convention, k=k)
+    elif schedule in ("N/Z", "n/z"):
+        result = compile_and_generate(graph, "N/Z (Fixed Bulk)", FIXED_BULK_CONVENTION, k=k)
+    else:
+        raise ValueError(f"Unknown schedule for rectangular_memory: {schedule}")
+    if result is None:
+        raise RuntimeError(f"Failed to compile rectangular_memory circuit for k={k} schedule={schedule}")
+    return result["circuit"]
 
 
 # =============================================================================
@@ -410,23 +441,29 @@ def main():
     parser = argparse.ArgumentParser(
         description="Run a single benchmark configuration for cluster execution."
     )
+    parser.add_argument('--experiment', type=str, required=True,
+                        choices=['spatial_hadamard', 'rectangular_memory'],
+                        help='Experiment type')
     parser.add_argument('--decoder', type=str, required=True,
                         help='Decoder name (pymatching, correlated_pymatching, tesseract)')
     parser.add_argument('--k', type=int, required=True,
                         help='Scaling factor k')
     parser.add_argument('--noise', type=float, required=True,
                         help='Physical error rate')
-    parser.add_argument('--flag-config', type=str, required=True,
+    parser.add_argument('--flag-config', type=str, default=None,
                         choices=['all', 'partial', 'none'],
-                        help='Flag configuration')
-    parser.add_argument('--direction', type=str, required=True,
+                        help='Flag configuration (required for spatial_hadamard)')
+    parser.add_argument('--direction', type=str, default=None,
                         choices=['x', 'y'],
-                        help='Direction (x or y)')
+                        help='Direction x or y (required for spatial_hadamard)')
+    parser.add_argument('--schedule', type=str, default=None,
+                        choices=['diagonal', 'N/Z', 'n/z'],
+                        help='Schedule (required for rectangular_memory: diagonal or N/Z)')
     parser.add_argument('--output', type=str, required=True,
                         help='Output CSV file path')
     parser.add_argument('--noise-mode', type=str, default='interface_only',
                         choices=['full', 'interface_only'],
-                        help='Noise mode (default: interface_only)')
+                        help='Noise mode (default: interface_only; rectangular_memory always uses full)')
     parser.add_argument('--max-shots', type=int, default=1_000_000_000_000,
                         help='Maximum shots (default: 1e12)')
     parser.add_argument('--max-errors', type=int, default=1000,
@@ -435,47 +472,66 @@ def main():
                         help='Number of parallel workers (default: 4)')
     parser.add_argument('--interface-margin', type=float, default=1.0,
                         help='Interface margin for interface_only noise (default: 1.0)')
-    
+
     args = parser.parse_args()
-    
+
+    # Validate experiment-specific args
+    if args.experiment == 'spatial_hadamard':
+        if args.flag_config is None or args.direction is None:
+            parser.error("--flag-config and --direction are required for experiment spatial_hadamard")
+        direction = args.direction
+        flag_config = args.flag_config
+    else:  # rectangular_memory
+        if args.schedule is None:
+            parser.error("--schedule is required for experiment rectangular_memory")
+        direction = "rectangular_memory"
+        flag_config = "diagonal" if args.schedule.lower() == "diagonal" else "N/Z"
+        args.noise_mode = "full"  # rectangular_memory always full noise
+
     print("=" * 70)
     print("Single Benchmark Task")
     print("=" * 70)
+    print(f"Experiment: {args.experiment}")
     print(f"Decoder: {args.decoder}")
     print(f"k: {args.k}")
     print(f"Noise: {args.noise:.6f}")
-    print(f"Flag config: {args.flag_config}")
-    print(f"Direction: {args.direction}")
+    print(f"Flag config: {flag_config}")
+    print(f"Direction: {direction}")
+    if args.experiment == 'rectangular_memory':
+        print(f"Schedule: {args.schedule}")
     print(f"Noise mode: {args.noise_mode}")
     print(f"Max shots: {args.max_shots:,}")
     print(f"Max errors: {args.max_errors:,}")
     print(f"Num workers: {args.num_workers}")
     print(f"Output: {args.output}")
     print()
-    
+
     # Generate compacted circuit (without noise)
     print("Generating circuit...")
-    circuit = generate_circuit_for_config(
-        direction=args.direction,
-        flag_config=args.flag_config,
-        k=args.k,
-    )
+    if args.experiment == 'spatial_hadamard':
+        circuit = generate_circuit_for_config(
+            direction=args.direction,
+            flag_config=args.flag_config,
+            k=args.k,
+        )
+    else:
+        circuit = generate_rectangular_memory_circuit(k=args.k, schedule=args.schedule)
     print(f"  Qubits: {circuit.num_qubits}, Detectors: {circuit.num_detectors}")
-    
+
     # Add noise using NoiseModel.noisy_circuit()
     print("Applying noise...")
     noise_model = NoiseModel.uniform_depolarizing(args.noise)
-    if args.noise_mode == 'interface_only':
+    if args.experiment == 'spatial_hadamard' and args.noise_mode == 'interface_only':
         noisy_circuit = apply_interface_only_noise(
             circuit, noise_model, args.k, args.direction, args.interface_margin
         )
     else:
         noisy_circuit = noise_model.noisy_circuit(circuit)
     print("  Noise applied")
-    
+
     metadata = {
-        'direction': args.direction,
-        'flag_config': args.flag_config,
+        'direction': direction,
+        'flag_config': flag_config,
         'k': args.k,
         'distance': None,  # Distance not computed for single runs
         'physical_error_rate': args.noise,
