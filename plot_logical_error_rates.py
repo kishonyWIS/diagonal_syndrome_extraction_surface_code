@@ -1164,7 +1164,11 @@ def plot_spatial_hadamard(
                 s for s in stats_list
                 if s.json_metadata['direction'] == dir_ and s.json_metadata['decoder'] == dec
             ]
-            
+
+            # Full-noise tesseract: use only k=1, 2, 3
+            if dec == 'tesseract' and filename_suffix == '_full':
+                filtered_stats = [s for s in filtered_stats if s.json_metadata.get('k') in (1, 2, 3)]
+
             if not filtered_stats:
                 continue
             
